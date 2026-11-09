@@ -1,0 +1,12 @@
+.env
+.env.*
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+service/.state/
+service/.venv/
+node_modules/
+*.pdf
+*.xlsx
+*.zip

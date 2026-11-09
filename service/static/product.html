@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>서비스 소개 · TradeMatch</title><link id="productStyles" rel="stylesheet" href="/product.css?v=5bec870ae2dc"><script src="/product.js?v=aad358a9eaeb" defer></script>
+</head>
+<body>
+<div id="assetError" class="notice" role="alert" hidden>화면 꾸밈 파일을 불러오지 못했어요. <button id="reloadAssets" type="button">화면 다시 불러오기</button></div>
+<a class="skip-link" href="#mainContent">본문으로 이동</a>
+<header class="topbar">
+  <a href="/" data-route class="brand" aria-label="TradeMatch 홈"><span class="brand-mark" aria-hidden="true">T↔</span>TradeMatch</a>
+  <nav aria-label="주 메뉴"><a href="/" data-route id="navAbout">서비스 소개</a><a href="/?view=new" data-route id="navNew">새 검증</a><a href="/?view=history" data-route id="navHistory">검증 기록</a></nav>
+  <div class="header-tools"><button id="readingToggle" class="reading-toggle" type="button" aria-pressed="false" aria-label="글씨 크게 보기"><span aria-hidden="true">가</span> 큰 글씨</button><button id="connectOpen" class="settings-button" type="button"><span id="connectionDot" class="connection-dot" aria-hidden="true"></span><span id="connectionLabel">연결 설정</span></button></div>
+</header>
+<main id="mainContent" tabindex="-1">
+  <div id="notice" class="notice" role="status" hidden></div>
+
+  <section id="aboutView" class="page about-page" aria-labelledby="aboutHeading">
+    <div class="about-hero">
+      <div class="about-intro">
+        <p class="eyebrow">서비스 소개</p>
+        <h1 id="aboutHeading" tabindex="-1">선적서류 대조·검증</h1>
+        <p class="about-lead">발주서, 송장, 포장명세서, 선하증권(B/L)을 함께 살펴봐요. 수량·금액·중량이 다른 부분이나 직접 확인할 부분을 문서 원본에서 찾아볼 수 있어요.</p>
+        <div class="action-row"><a href="/?view=new" data-route class="button primary" id="aboutStart">PDF 등록하기 →</a><button type="button" class="button secondary" id="aboutShowWorkflow">워크플로우 보기 ↓</button></div>
+        <p class="about-input-note">PO · CI · PL · B/L을 묶은 PDF 한 개로 시작하세요.</p>
+      </div>
+      <div class="about-documents" aria-label="대조하는 네 종류의 선적서류">
+        <div class="about-docs-caption"><span>대조하는 서류</span><span>같은 선적 기준</span></div>
+        <div class="about-document-grid">
+          <div><b>PO</b><strong>발주서</strong><span>주문 품목·수량·단가</span></div>
+          <div><b>CI</b><strong>상업송장</strong><span>청구 품목·통화·금액</span></div>
+          <div><b>PL</b><strong>포장명세서</strong><span>품목 수량·포장·중량</span></div>
+          <div><b>B/L</b><strong>선하증권</strong><span>선적 참조·포장·총중량</span></div>
+        </div>
+
+      </div>
+    </div>
+
+    <section class="about-workflow" aria-labelledby="aboutWorkflowHeading">
+      <div class="about-section-heading"><div><p class="eyebrow">워크플로우</p><h2 id="aboutWorkflowHeading" tabindex="-1">문서는 이렇게 확인해요</h2></div><span class="about-readonly">구성 개요 · 읽기 전용</span></div>
+      <div class="about-service-flow" aria-label="서비스 처리 순서"><span><b>01</b> PDF 등록</span><i aria-hidden="true">→</i><span class="studio-flow-label"><b>02</b> Studio 추출·검증</span><i aria-hidden="true">→</i><span><b>03</b> 원문 비교·담당자 확인</span></div>
+      <div class="about-studio">
+        <div class="about-studio-heading"><strong>Upstage Studio</strong><span>문서 이해와 업무 판정의 중심</span></div>
+        <ol class="about-node-flow">
+          <li><span class="about-node-number">1</span><h3>문서 읽기</h3><p>Parse</p><small>PDF에서 글자와 표, 각 값이 적힌 위치를 읽어요.</small></li>
+          <li><span class="about-node-number">2</span><h3>분류·항목 추출</h3><p>Classify / Split → Extract</p><small>서류 종류를 나누고 비교에 필요한 값을 찾아요.</small></li>
+          <li><span class="about-node-number">3</span><h3>병합·종합 검증</h3><p>Merge → Instruct</p><small>연결된 문서를 찾아 품목·금액·포장·중량을 비교해요.</small></li>
+          <li><span class="about-node-number">4</span><h3>상태별 결과</h3><p>Instruct 분기</p><small>어떤 항목이 같고 다른지, 직접 확인할 부분은 무엇인지 알려드려요.</small></li>
+        </ol>
+        <div class="about-outcomes"><span class="pass">✓ 일치</span><span class="fail">≠ 불일치</span><span class="review">? 담당자 검토 필요</span></div>
+        <details class="about-node-details"><summary>워크플로우 구조 보기</summary><div class="workflow-upload"><div><h3>실제 노드와 연결선을 한눈에</h3><p>최신 Studio 워크플로우 JSON을 선택하면 구조를 펼쳐 보여줘요. 선택한 파일은 이 브라우저에서만 읽으며 검증 설정은 바뀌지 않아요.</p></div><label class="button secondary" for="workflowJson">워크플로우 JSON 선택</label><input id="workflowJson" type="file" accept=".json,application/json" class="sr-only"></div><p id="workflowMapStatus" class="workflow-map-status" role="status">아직 최신 워크플로우 JSON이 연결되지 않았어요.</p><div id="workflowMap" class="workflow-map" tabindex="0" role="region" aria-label="워크플로우 노드와 연결선" hidden></div><p class="about-version-note">위 네 단계는 서비스의 처리 개요예요. 아래 구조도는 선택한 JSON의 연결 정보만 표시하며, Studio 저장본을 실시간 조회하거나 실행하지 않아요.</p></details>
+      </div>
+    </section>
+
+    <section class="about-contribution" aria-labelledby="aboutContributionHeading">
+      <p class="eyebrow">구현</p><h2 id="aboutContributionHeading">검증과 서비스의 역할</h2>
+      <div class="about-role-grid">
+        <article><span>STUDIO</span><h3>문서를 이해하고 판정</h3><p>항목 추출부터 문서 간 정합성 검사까지, 핵심 검증은 Studio 워크플로우가 맡습니다.</p></article>
+        <article><span>PYTHON · SERVICE</span><h3>실행을 연결하고 원문 표시</h3><p>업로드·실행·결과 조회를 연결하고, 비교한 값을 PDF 위치에 표시합니다. Studio의 업무 판정을 임의로 바꾸지 않습니다.</p></article>
+        <article><span>HUMAN</span><h3>차이를 보고 다음 조치 결정</h3><p>검사 카드를 넘기며 두 원문의 표시 위치와 근거를 확인하고, 불일치나 미확인 항목을 검토합니다.</p></article>
+      </div>
+      <p class="about-policy">확인할 수 없는 값은 추측해 채우지 않습니다. 담당자 검토가 필요한 경우에도 이미 확인된 불일치는 함께 보여줍니다.</p>
+    </section>
+    <div class="about-bottom"><div><h2>PDF를 등록해 검증을 시작하세요.</h2><p>PDF를 등록하면 비교 결과와 원문을 함께 확인할 수 있어요.</p></div><a href="/?view=new" data-route class="button primary">PDF 등록하기 →</a></div>
+  </section>
+
+  <section id="newView" class="page new-page" aria-labelledby="newHeading" hidden>
+    <div class="page-heading"><p class="eyebrow">새 검증</p><h1 id="newHeading" tabindex="-1">선적서류 검증</h1><p class="subtitle">같은 선적의 발주서·송장·포장명세서·선하증권(B/L)을 함께 확인해요.</p></div>
+    <div id="newJourneyHost" class="journey-host"><ol id="serviceJourney" class="service-journey" data-state="idle" aria-label="문서 확인 단계"><li class="is-current" aria-current="step"><span class="journey-node"><b>1</b><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg></span><div><strong>문서 등록</strong><small class="journey-caption">PDF를 골라주세요</small></div></li><li><span class="journey-node"><b>2</b><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg></span><div><strong>검증 진행</strong><small class="journey-caption">등록 후 시작해요</small></div></li><li><span class="journey-node"><b>3</b><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg></span><div><strong>결과 확인</strong><small class="journey-caption">완료되면 볼 수 있어요</small></div></li></ol></div>
+    <section class="upload-panel" aria-label="검증할 PDF 등록">
+      <div class="panel-heading"><h2>검증할 PDF</h2><span>파일 1개 · 최대 50 MB</span></div>
+      <p class="upload-help">발주서·송장·포장명세서·선하증권(B/L)을 하나로 묶은 PDF를 골라주세요.</p>
+      <div id="dropzone" class="dropzone">
+        <div class="upload-illustration" aria-hidden="true"><svg viewBox="0 0 160 88"><path class="upload-tray" d="M32 57v14a6 6 0 0 0 6 6h84a6 6 0 0 0 6-6V57M33 65h27l7 7h26l7-7h27"/><g class="upload-paper"><path d="M58 8h30l14 14v36H58z"/><path d="M88 8v15h14M68 33h23M68 41h23M68 49h13"/><text x="68" y="26">PDF</text></g><path class="upload-arrow" d="M118 36v17m-6-7 6 7 6-7"/></svg></div><strong>PDF를 여기에 놓아주세요.</strong><span>아래 버튼을 눌러 파일을 고를 수도 있어요.</span>
+        <button id="chooseFile" class="button secondary" type="button">PDF 고르기</button><input id="productFile" type="file" accept=".pdf,application/pdf" hidden>
+      </div>
+      <div id="selectedFile" class="selected-file" hidden><span class="file-symbol small-symbol" aria-hidden="true">PDF</span><div><strong id="selectedName"></strong><span id="selectedSize"></span></div><div class="selected-file-actions"><button id="changeFile" class="quiet" type="button">다른 PDF 선택</button><button id="removeFile" class="quiet" type="button">선택 해제</button></div></div>
+      <div id="setupNeeded" class="setup-needed" hidden><div><strong>처음 한 번, 연결 설정이 필요해요.</strong><p id="setupMessage"></p></div><button id="connectSecond" class="button secondary" type="button">연결 설정 열기</button></div>
+      <div class="upload-footer"><div><p id="uploadHint">파일을 고른 뒤 검증 시작을 눌러주세요.</p><p id="uploadEstimate" class="upload-estimate" hidden></p></div><button id="liveStart" class="button primary" type="button" disabled>검증 시작 →</button></div>
+    </section>
+    <p class="upload-reuse-note">같은 내용의 PDF를 같은 검증 설정으로 다시 올리면 기존 진행 상태나 결과를 보여줘요.</p>
+    <p class="scope-note">문서에 적힌 값을 비교해요. 읽기 어렵거나 빠진 항목은 직접 확인할 수 있도록 알려드려요.</p>
+    <details class="upload-guide"><summary>어떤 PDF를 준비하면 되나요?</summary><p>같은 선적의 발주서(PO), 상업송장(CI), 포장명세서(PL), 선하증권(B/L)을 PDF 한 개로 묶어주세요. 파일 크기는 50 MB까지 가능해요. 검증 시작을 누르면 Upstage Studio로 보내 함께 확인해요.</p><a href="/" data-route class="text-link">서비스와 검증 과정 보기</a></details>
+  </section>
+
+  <section id="progressView" class="page progress-page" aria-labelledby="progressHeading" hidden>
+    <a href="/?view=history" data-route class="back-link">← 검증 기록</a>
+    <div id="progressJourneyHost" class="journey-host"></div>
+    <div id="progressCard" class="progress-card waiting-card">
+      <div class="waiting-heading"><span id="progressSpinner" class="loading-ring" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="m12 3 2.2 6.8L21 12l-6.8 2.2L12 21l-2.2-6.8L3 12l6.8-2.2Z"/></svg></span><div><p id="progressEyebrow" class="eyebrow">검증 진행</p><h1 id="progressHeading" tabindex="-1">문서를 읽고 비교하고 있어요.</h1></div></div>
+      <p id="progressFilename" class="progress-filename"></p><p id="progressMessage" class="subtitle" role="status"></p>
+      <div id="processVisual" class="process-visual" data-phase="loading" aria-hidden="true"><svg viewBox="0 0 400 126"><path class="process-track" d="M82 64h236"/><g class="process-packet"><circle cx="130" cy="64" r="3"/><circle cx="200" cy="64" r="3"/><circle cx="270" cy="64" r="3"/></g><g class="process-file process-file-left"><path d="M48 23h38l12 13v66H48z"/><path d="M86 23v14h12M59 51h27M59 61h27M59 71h20M59 81h24"/></g><g class="process-file process-file-right"><path d="M302 23h38l12 13v66h-50z"/><path d="M340 23v14h12M313 51h27M313 61h27M313 71h20M313 81h24"/></g><g class="process-reader"><rect x="166" y="29" width="68" height="70" rx="12"/><path class="reader-brackets" d="M179 48v-7h8m26 0h8v7m0 31v8h-8m-26 0h-8v-8"/><path class="reader-lines" d="M185 56h30M185 64h30M185 72h21"/><path class="reader-scan" d="M175 43h50"/><path class="reader-check" d="m183 64 12 12 23-28"/></g></svg><span id="processVisualLabel">문서를 준비하고 있어요</span></div>
+      <div class="waiting-time"><p id="elapsed" class="elapsed"></p><p id="timeEstimate" class="time-estimate" role="status">이전 기록으로 예상 시간을 확인하고 있어요.</p></div>
+      <div id="resultReady" class="result-ready" role="region" aria-label="준비된 검증 결과" hidden><div><strong>검증 결과가 도착했어요.</strong><p>게임은 계속할 수 있어요. 준비되면 결과를 확인하세요.</p></div><button id="viewResult" class="button primary" type="button">결과 보기 →</button></div>
+      <p class="waiting-note"><span id="waitingBackgroundMessage">다른 화면으로 이동해도 검증은 계속돼요.</span></p>
+    </div>
+    <div id="waitingGameHost"></div>
+  </section>
+
+  <section id="gameView" class="page game-page" aria-labelledby="stackHeading" hidden><a href="/?view=new" data-route class="back-link">← PDF 올리러 가기</a><div id="standaloneGameHost"></div></section>
+
+  <section id="stackGame" class="stack-game" aria-labelledby="stackHeading" hidden>
+    <div class="stack-header"><div><p class="eyebrow">기다리는 동안 한 판</p><h2 id="stackHeading">컨테이너 쌓기</h2></div><div class="stack-scores"><div><span>쌓은 개수</span><strong id="stackScore">0</strong></div><div><span>최고 기록</span><strong id="stackBest">0</strong></div></div></div>
+    <p id="stackInstruction" class="stack-instruction">타이밍에 맞춰 클릭하거나 터치해서 배 위에 쌓아보세요.</p>
+    <button id="stackStage" class="stack-stage" type="button" aria-label="컨테이너 쌓기 시작" aria-describedby="stackInstruction">
+      <svg viewBox="0 0 600 360" role="img" aria-labelledby="stackSceneTitle"><title id="stackSceneTitle">크레인에서 컨테이너를 떨어뜨려 화물선에 쌓는 게임</title>
+        <defs><linearGradient id="stackSky" x2="0" y2="1"><stop stop-color="#f2f6ed"/><stop offset="1" stop-color="#e4eee5"/></linearGradient></defs>
+        <rect width="600" height="360" fill="url(#stackSky)"/><circle cx="480" cy="72" r="24" fill="#ead395"/>
+        <path d="M43 95h60m-42-8h50m351 54h50" stroke="#ceded0" stroke-width="5" stroke-linecap="round"/>
+        <path d="M25 277V199h43v78m12 0v-56h50v56m355 0v-70h42v70m12 0v-42h36v42" fill="#d6e3d6"/>
+        <path d="M30 29h540M550 29v262M535 29l15 26 15-26m-30 52 15-26 15 26m-30 0 15 26 15-26" fill="none" stroke="#adc2af" stroke-width="6" stroke-linejoin="round"/>
+        <g id="stackShip"><path d="M125 291h351l-31 42H154z" fill="#255d4c"/><path d="M128 291h345" stroke="#153f34" stroke-width="8"/><path d="M155 321h292" stroke="#e5c98a" stroke-width="4"/><rect x="407" y="263" width="37" height="24" rx="3" fill="#f7f7ed"/><rect x="412" y="269" width="12" height="9" rx="2" fill="#97b6ac"/><rect x="428" y="269" width="11" height="9" rx="2" fill="#97b6ac"/><text x="177" y="315" fill="#f1f5e9" font-size="11" font-family="Arial,sans-serif" letter-spacing="2">TRADEMATCH</text></g>
+        <g id="stackBlocks"></g><path id="stackRope" fill="none" stroke="#7b9583" stroke-width="2"/>
+        <g id="stackMoving"></g>
+        <path d="M0 336q25-7 50 0t50 0t50 0t50 0t50 0t50 0t50 0t50 0t50 0t50 0t50 0t50 0v24H0z" fill="#adcbd0"/><path d="M20 350h55m95 0h43m248 0h54" stroke="#dce9e4" stroke-width="2" stroke-linecap="round"/>
+      </svg>
+      <span id="stackOverlay" class="stack-overlay"><strong id="stackOverlayTitle">항구의 빈자리를 채워볼까요?</strong><span id="stackOverlayHint">화면을 눌러 시작하세요.</span></span>
+    </button>
+    <div class="stack-footer"><p id="stackMessage" role="status">클릭 · 터치 · 스페이스바로 놓기</p><div class="action-row"><button id="stackAction" class="button primary" type="button">쌓기 시작</button><button id="stackPause" class="quiet" type="button" hidden>잠깐 쉬기</button></div></div>
+    <p class="stack-disclaimer">게임 점수는 문서 검증 결과에 영향을 주지 않습니다.</p>
+  </section>
+
+  <section id="errorView" class="page error-page" aria-labelledby="errorHeading" hidden>
+    <a href="/?view=history" data-route class="back-link">← 검증 기록</a>
+    <div class="error-card"><span class="error-symbol" aria-hidden="true">!</span><p class="eyebrow">실행 상태 확인</p><h1 id="errorHeading" tabindex="-1">검증을 마치지 못했어요.</h1><p id="errorFilename" class="progress-filename"></p><p id="errorMessage" class="subtitle"></p><p id="errorNext" class="error-next"></p><div class="action-row"><button id="resumeRun" class="button primary" type="button" hidden>이어서 결과 확인</button><a href="/?view=history" data-route class="button secondary">검증 기록으로 이동</a></div><details class="technical-details"><summary>무슨 문제가 있었나요?</summary><dl id="errorDetails"></dl><a id="errorRaw" class="text-link" hidden>원본 응답 내려받기</a></details></div>
+  </section>
+
+  <section id="resultView" class="page result-page" aria-labelledby="resultHeading" hidden>
+    <a href="/?view=history" data-route class="back-link">← 검증 기록</a>
+    <div class="result-heading"><div><p class="eyebrow">검증 결과</p><h1 id="resultHeading" tabindex="-1"></h1><p id="resultMeta" class="subtitle"></p></div><div class="action-row"><button id="guidedStart" class="button primary" type="button">항목 따라보기 →</button><button id="reportOpen" class="button secondary" type="button">보고서 보기</button></div></div>
+
+    <div id="decisionBanner" class="decision-banner"><span id="decisionIcon" class="decision-icon" aria-hidden="true"></span><div><span class="summary-label">확인 결과</span><h2 id="decisionTitle"></h2><p id="decisionSubtitle"></p></div></div>
+    <section id="resultContext" class="result-context" aria-labelledby="resultContextHeading" hidden><h2 id="resultContextHeading">종합 판정도 확인해 주세요</h2><p id="resultContextMessage"></p><details><summary>기록된 종합 사유</summary><div id="resultContextReasons"></div></details></section><div id="technicalNotice" class="technical-notice" hidden></div>
+    <section id="resultAttention" class="result-items" aria-labelledby="resultItemsHeading"><h2 id="resultItemsHeading">확인할 항목</h2><div id="resultAttentionList" class="result-item-list"></div></section><details id="resultPassed" class="result-passed"><summary>나머지 검사 결과 보기</summary><div id="resultPassedList" class="result-item-list"></div></details>
+    <div id="guidedReturnPoint" hidden></div>
+    <section id="comparisonWorkspace" class="comparison-workspace" aria-labelledby="comparisonTitle" hidden>
+      <div id="checkReviewCard" class="check-review-card" tabindex="0" role="group" aria-labelledby="comparisonTitle" aria-describedby="checkPlainSummary reviewKeyboardHint">
+        <div class="review-card-top"><span class="eyebrow">하나씩 확인하기</span><span id="checkPosition" class="check-position" aria-live="polite" aria-atomic="true"></span></div>
+        <div class="comparison-heading"><div><span id="comparisonStatus" class="status-pill"></span><h2 id="comparisonTitle">원문 비교</h2></div></div>
+        <p id="checkDocuments" class="check-documents"></p>
+        <p id="checkPlainSummary" class="review-plain-summary"></p><details id="reasonDetails" class="review-source"><summary>자세한 판단 이유</summary><p id="checkReason" class="review-reason"></p><button id="expandCheckReason" type="button" class="quiet review-expand" aria-expanded="false" aria-controls="checkReason" hidden>설명 더 보기</button></details>
+      </div>
+      <div class="review-controls"><div><button id="reviewControlLabel" class="review-control-label" type="button" aria-label="지금 보고 있는 항목의 설명으로 이동"></button><p id="reviewKeyboardHint">카드에서 ← 이전 · → 다음 / Tab 버튼으로 이동</p><button id="reviewAll" class="quiet review-all" type="button" hidden>전체 검사로 돌아가기</button></div><div class="action-row"><button id="previousCheck" class="button secondary" type="button">← 이전</button><button id="nextCheck" class="button primary" type="button">다음 항목 →</button></div></div>
+      <p id="reviewEnd" class="review-end" role="status" hidden>마지막 검사입니다. 이전 카드로 돌아가거나 아래에서 원문을 확인할 수 있습니다.</p>
+      <details class="check-jump"><summary>원하는 항목 골라보기</summary><label>확인할 항목<select id="compareCheckSelect" aria-label="확인할 항목"></select></label></details>
+      <p id="selectedCheckContext" class="sr-only" role="status"></p>
+      <p id="comparisonHelp" class="comparison-help"></p><p id="comparisonSummary" class="comparison-summary" hidden></p>
+      <div class="comparison-tools"><div id="comparisonPairs" class="comparison-pairs"></div><div class="action-row"><button id="compareFocus" type="button" class="button secondary">표시된 부분 보기</button><button id="compareZoom" type="button" class="button secondary" aria-pressed="false">표시된 부분 확대</button></div></div>
+      <div class="comparison-quick-values" aria-label="비교값 요약"><div><span id="quickLeftTitle"></span><strong id="quickLeftValue"></strong></div><span aria-hidden="true">↔</span><div><span id="quickRightTitle"></span><strong id="quickRightValue"></strong></div></div>
+      <p id="comparisonValueNote" class="comparison-value-note" role="status" hidden>적힌 값은 다르지만, Studio는 이 항목을 일치로 판단했어요. 위 설명과 문서 원본을 함께 확인해 주세요.</p>
+      <p id="comparisonScrollHint" class="comparison-scroll-hint">↔ 옆으로 밀어 다른 문서도 확인해 보세요. 글씨를 읽기 쉽도록 원본 크기를 유지했어요.</p>
+      <div id="comparisonScroll" class="comparison-scroll" tabindex="0" role="region" aria-label="두 원문 비교 영역" aria-describedby="comparisonScrollHint">
+      <div id="comparisonBoard" class="comparison-board">
+        <article id="compareLeftPaper" class="comparison-paper"><div class="paper-heading"><h3 id="compareLeftTitle"></h3><a id="compareLeftOpen" class="text-link" target="_blank" rel="noopener" hidden>원본 PDF 보기 ↗</a></div><p id="compareLeftMeta" class="paper-meta"></p><div class="paper-value"><span id="compareLeftField"></span><strong id="compareLeftValue"></strong></div><div id="compareLeftViewport" class="compare-viewport"><div id="compareLeftStage" class="compare-stage"><img id="compareLeftImage" alt="비교 원문" hidden><svg id="compareLeftOverlay" class="paper-overlay" viewBox="0 0 1000 1000" preserveAspectRatio="none" role="img" aria-label="비교한 원문 위치"></svg></div><div id="compareLeftEmpty" class="comparison-empty">원문을 준비하고 있습니다.</div></div><p id="compareLeftNote" class="paper-note"></p></article>
+        <article id="compareRightPaper" class="comparison-paper"><div class="paper-heading"><h3 id="compareRightTitle"></h3><a id="compareRightOpen" class="text-link" target="_blank" rel="noopener" hidden>원본 PDF 보기 ↗</a></div><p id="compareRightMeta" class="paper-meta"></p><div class="paper-value"><span id="compareRightField"></span><strong id="compareRightValue"></strong></div><div id="compareRightViewport" class="compare-viewport"><div id="compareRightStage" class="compare-stage"><img id="compareRightImage" alt="비교 원문" hidden><svg id="compareRightOverlay" class="paper-overlay" viewBox="0 0 1000 1000" preserveAspectRatio="none" role="img" aria-label="비교한 원문 위치"></svg></div><div id="compareRightEmpty" class="comparison-empty">원문을 준비하고 있습니다.</div></div><p id="compareRightNote" class="paper-note"></p></article>
+        <svg id="comparisonLines" class="comparison-lines" aria-label="양쪽 원문의 대응 위치 연결" role="img" preserveAspectRatio="none"></svg>
+      </div></div>
+    </section>
+    <details id="checkInventory" class="check-inventory" hidden><summary>전체 항목과 자세한 설명 보기</summary><section class="checks-pane" aria-labelledby="checksHeading"><div class="pane-heading"><h2 id="checksHeading">검사 결과</h2><span id="checkCount"></span></div><div id="checkFilters" class="check-filters" aria-label="표시할 검사"><button id="attentionFilter" class="filter active" type="button" aria-pressed="true">확인 필요</button><button id="allFilter" class="filter" type="button" aria-pressed="false">전체 검사</button></div><div id="findings" class="findings"></div><details id="issuesSection" class="issues-section" hidden><summary id="issuesTitle">확인이 필요한 이유</summary><div id="issuesList"></div></details></section></details>
+    <details class="technical-details result-details"><summary>실행 정보·원본 데이터 보기</summary><p class="original-decision">Studio 원본 종합 판정 <span id="decisionEnum" class="status-code"></span></p><dl id="provenanceDetails"></dl><div class="action-row"><a id="rawDownload" class="text-link">원본 JSON 내려받기</a><a href="/workspace" class="text-link">상세 분석 화면 ↗</a></div><pre id="studioNarrative"></pre></details>
+  </section>
+
+  <section id="historyView" class="page history-page" aria-labelledby="historyHeading" hidden>
+    <div class="result-heading"><div><p class="eyebrow">문서 관리</p><h1 id="historyHeading" tabindex="-1">검증 기록</h1><p class="subtitle">올린 문서가 어디까지 처리됐는지, 어떤 결과가 나왔는지 확인해요.</p></div></div>
+    <div class="history-search-tools"><label class="history-search-label" for="historySearch">파일 이름으로 찾기<input type="search" id="historySearch" placeholder="예: TM11_022" autocomplete="off" spellcheck="false" aria-controls="runHistory"></label><label for="historyStatus">진행·종합 판정<select id="historyStatus" aria-controls="runHistory"><option value="all">모든 상태</option><option value="FAIL">불일치</option><option value="REQUIRES_HUMAN_REVIEW">검토 필요</option><option value="PASS">일치</option><option value="active">진행 중</option><option value="unfinished">미완료·실행 오류</option><option value="unknown">결과 확인 필요</option></select></label><button id="clearHistoryFilters" class="button secondary" type="button" hidden>검색 지우기</button></div>
+    <div class="history-toolbar"><p id="historyCount" role="status" aria-live="polite"></p><button id="refreshHistory" class="button secondary" type="button">새로고침</button></div><div id="runHistory" class="run-history" aria-busy="false"></div>
+  </section>
+  <footer class="app-footer"><span>TradeMatch</span><span>올린 문서의 내용만 비교해요. 발행·통관 승인을 대신하지 않아요.</span></footer>
+</main>
+<dialog id="guidedDialog" class="guided-dialog" aria-labelledby="guidedHeading"><div class="guided-header"><div><h2 id="guidedHeading">항목 따라보기</h2><p><span id="guidedFilename"></span> · <span id="guidedPosition" aria-live="polite"></span></p></div><button id="guidedClose" class="button secondary" type="button">닫기 <span aria-hidden="true">✕</span></button></div><p id="guidedKeys" class="guided-keys">불일치 → 직접 확인 필요 → 일치 순서로 살펴봐요. 카드에서 ← 이전 · → 다음 / Tab 버튼으로 이동 / Esc 닫기</p><div id="guidedHost" class="guided-host" tabindex="0" role="group" aria-label="PDF 비교 카드" aria-describedby="guidedKeys"></div></dialog>
+<dialog id="reportDialog" class="report-dialog" aria-labelledby="reportHeading"><header class="report-header"><div><p class="eyebrow">검증 보고서</p><h2 id="reportHeading" tabindex="-1"></h2><p id="reportDate" class="subtitle"></p></div><button id="reportClose" class="button secondary" type="button">닫기 ✕</button></header><div id="reportBody" class="report-body"></div><footer class="report-footer"><p>현재 제공한 문서의 비교 결과예요. 발행·통관 승인을 대신하지 않아요.</p><a id="reportDownload" class="button secondary" download>보고서 내려받기</a></footer></dialog>
+<dialog id="connectionDialog" class="connection-dialog" aria-labelledby="connectionHeading"><form id="connectionForm"><div class="dialog-heading"><div><p class="eyebrow">서비스 설정</p><h2 id="connectionHeading">검증 환경 연결</h2></div><button id="connectClose" type="button" class="quiet" aria-label="연결 설정 닫기">닫기 ✕</button></div><p id="connectionDescription" class="dialog-description">Studio에 저장된 워크플로우를 연결해요. 바꾼 설정은 다음 검증부터 적용돼요.</p><div id="keyState" class="key-state"></div><label>Agent ID<input id="agentInput" name="agent_id" placeholder="agt_…" required pattern="agt_[A-Za-z0-9]+" autocomplete="off"></label><label>Project ID<input id="projectInput" name="project_id" placeholder="proj_…" required pattern="proj_[A-Za-z0-9]+" autocomplete="off"></label><label>워크플로우 버전(Config)<input id="configInput" name="config_version" type="number" min="1" step="1" placeholder="Studio에 저장된 버전 번호" required></label><details id="connectionAdvanced"><summary>고급 설정</summary><label>판정 노드 이름 (선택)<input id="decisionInput" name="decision_node" maxlength="100" placeholder="예: 선적서류_종합검증"></label><a href="/workspace" class="text-link">기존 Job 조회·개발자 분석 화면 ↗</a></details><p id="connectionError" class="form-error" role="status"></p><button id="saveConnection" type="submit" class="button primary">설정 저장</button></form></dialog>
+</body>
+</html>
