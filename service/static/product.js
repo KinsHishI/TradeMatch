@@ -1167,74 +1167,87 @@ $('connectionForm').onsubmit = async event => {
   } catch (error) { $('connectionError').textContent = error.message; }
   finally { $('saveConnection').disabled = false; }
 };
-// Local-only free throw: the preview and the shot share the same physics.
-const PDF_COURT={width:900,height:480,gravity:900,rimX:704,rimY:190,rimHalf:42,radius:11,homeX:210,homeY:370};
+// Frontal court: x/y are shot coordinates; z measures distance toward the hoop.
+// The short aiming guide and the released PDF use the same unassisted physics.
+const PDF_COURT={width:900,height:480,gravity:900,rimX:450,rimY:205,rimHalf:112,radius:11,homeX:450,homeY:405,depthSpeed:.9};
+function freeThrowProjection(ball){
+  const scale=1/(1+Math.max(0,ball.z||0)*.85);
+  return {x:PDF_COURT.rimX+(ball.x-PDF_COURT.rimX)*scale,y:PDF_COURT.rimY+(ball.y-PDF_COURT.rimY)*scale,scale};
+}
 function freeThrowStep(ball,dt){
-  const c=PDF_COURT,oldX=ball.x,oldY=ball.y;
-  ball.x+=ball.vx*dt;ball.y+=ball.vy*dt+c.gravity*dt*dt/2;ball.vy+=c.gravity*dt;ball.age=(ball.age||0)+dt;
-  if(!ball.scored&&oldY<c.rimY&&ball.y>=c.rimY&&ball.vy>0){
-    const x=oldX+(ball.x-oldX)*(c.rimY-oldY)/(ball.y-oldY);
-    if(x>c.rimX-c.rimHalf+c.radius&&x<c.rimX+c.rimHalf-c.radius){ball.scored=true;ball.x=x;ball.vx*=.12;return 'goal';}
-  }
-  if(!ball.scored){
-    if(ball.x+c.radius>758&&oldX+c.radius<=758&&ball.y>72&&ball.y<210){ball.x=758-c.radius;ball.vx=-Math.abs(ball.vx)*.64;}
-    for(const rim of [c.rimX-c.rimHalf,c.rimX+c.rimHalf]){
-      const dx=ball.x-rim,dy=ball.y-c.rimY,d=Math.hypot(dx,dy),radius=c.radius+4;
-      if(d>0&&d<radius){const nx=dx/d,ny=dy/d,dot=ball.vx*nx+ball.vy*ny;if(dot<0){ball.vx-=1.65*dot*nx;ball.vy-=1.65*dot*ny;}ball.x=rim+nx*radius;ball.y=c.rimY+ny*radius;}
+  const c=PDF_COURT,old={x:ball.x,y:ball.y,z:ball.z||0};
+  ball.x+=ball.vx*dt;ball.y+=ball.vy*dt+c.gravity*dt*dt/2;ball.vy+=c.gravity*dt;
+  ball.z=old.z+(ball.vz??c.depthSpeed)*dt;ball.age=(ball.age||0)+dt;
+  if(!ball.scored&&!ball.crossed&&old.z<1&&ball.z>=1){
+    ball.crossed=true;
+    const part=(1-old.z)/(ball.z-old.z),x=old.x+(ball.x-old.x)*part,y=old.y+(ball.y-old.y)*part;
+    if(ball.vy>0&&Math.abs(x-c.rimX)<c.rimHalf-c.radius&&Math.abs(y-c.rimY)<28){
+      ball.scored=true;ball.x=x;ball.z=1;ball.vz=0;ball.vx*=.1;return 'goal';
     }
+    // A shot meeting the backboard or rim rebounds toward the player.
+    const projected=freeThrowProjection({x,y,z:1});
+    if(projected.x>320&&projected.x<580&&projected.y>65&&projected.y<225){ball.z=1;ball.vz=-.3;ball.vx*=.6;ball.vy=Math.max(100,ball.vy*.45);}
   }
-  return ball.y>452||ball.x>950||ball.x< -50||ball.age>3.5?'end':null;
+  return ball.y>515||ball.x>1250||ball.x< -350||ball.z>1.8||ball.age>3.5?'end':null;
 }
 function freeThrowPreview(ball){
-  const copy={...ball},points=[{x:copy.x,y:copy.y}];
-  for(let i=0;i<78;i++){const event=freeThrowStep(copy,1/45);if(i%3===0)points.push({x:copy.x,y:copy.y});if(event==='goal'||event==='end')break;}
+  const copy={...ball},points=[freeThrowProjection(copy)];
+  for(let i=0;i<12;i++){
+    const event=freeThrowStep(copy,1/60),point=freeThrowProjection(copy),start=points[0];
+    if(Math.hypot(point.x-start.x,point.y-start.y)>105)break;
+    if(i%2===1)points.push(point);
+    if(event==='goal'||event==='end')break;
+  }
   return points;
 }
 function createFreeThrowGame(){
   const c=PDF_COURT,labels=['CI','BL','PO','PL'],colors={CI:'#3159d9',BL:'#356f8a',PO:'#7661ad',PL:'#b87829'};
   const stage=$('hoopStage'),svg=$('hoopSvg');
-  let run=null,phase='ready',last=null,frame=0,ball=null,drag=null,score=0,streak=0,best=0,attempts=0,label='',resultTime=0,pausedPhase='ready',particles=[];
+  let run=null,phase='ready',last=null,frame=0,ball=null,drag=null,score=0,streak=0,best=0,attempts=0,label='',resultTime=0,pausedPhase='ready',particles=[],keyboard={dx:0,dy:-140};
   const reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
   try{const value=Number(localStorage.getItem('tradematch.pdf-hoop-best'));if(Number.isInteger(value)&&value>=0&&value<100000)best=value;}catch{}
+  function shot(dx,dy){return {x:c.homeX,y:c.homeY,z:0,vx:Math.max(-650,Math.min(650,dx*2.5)),vy:Math.max(-1000,Math.min(400,dy*4)),vz:c.depthSpeed,age:0,scored:false};}
   function paper(){
     const group=$('hoopMoving');group.replaceChildren();
-    group.append(svgElement('path',{d:'M -26 -33 H 12 L 27 -18 V 33 H -26 Z',fill:'white',stroke:colors[label],'stroke-width':2}));
-    group.append(svgElement('path',{d:'M 12 -33 V -18 H 27',fill:'#e8edf9',stroke:colors[label],'stroke-width':1.5}));
-    group.append(svgElement('rect',{x:-20,y:-8,width:40,height:24,rx:5,fill:colors[label]}));
-    const name=svgElement('text',{x:0,y:9,'text-anchor':'middle',fill:'white','font-size':16,'font-weight':750});name.textContent=label;group.append(name);
-    group.append(svgElement('path',{d:'M -17 23 H 17',stroke:'#d9e1ef','stroke-width':2}));
-    $('hoopDocumentName').textContent=label+'.pdf';group.setAttribute('aria-label',label+' PDF 잡아서 던지기');
+    group.append(svgElement('path',{d:'M -28 -35 H 13 L 29 -19 V 35 H -28 Z',fill:'white',stroke:colors[label],'stroke-width':2}));
+    group.append(svgElement('path',{d:'M 13 -35 V -19 H 29',fill:'#e8edf9',stroke:colors[label],'stroke-width':1.5}));
+    group.append(svgElement('rect',{x:-21,y:-8,width:42,height:25,rx:5,fill:colors[label]}));
+    const name=svgElement('text',{x:0,y:10,'text-anchor':'middle',fill:'white','font-size':16,'font-weight':750});name.textContent=label;group.append(name);
+    group.append(svgElement('path',{d:'M -18 25 H 18',stroke:'#d9e1ef','stroke-width':2}));
+    $('hoopDocumentName').textContent=label+'.pdf';group.setAttribute('aria-label',label+' PDF 조준해서 던지기');
   }
   function paint(){
     if(!ball)return;
-    const angle=phase==='flight'||phase==='celebrating'?Math.max(-45,Math.min(45,ball.vx*.05))*(ball.scored ? 0.3 : 1):drag?(ball.x-c.homeX)*.08:-7;
-    const scale=ball.scored ? 0.83 : 1;
-    $('hoopMoving').setAttribute('transform',`translate(${ball.x} ${ball.y}) rotate(${angle}) scale(${scale})`);
-    $('hoopShadow').setAttribute('cx',ball.x);$('hoopShadow').setAttribute('rx',Math.max(9,26-(430-ball.y)*.025));
+    const point=freeThrowProjection(ball),flying=phase==='flight'||phase==='celebrating'||phase==='missed';
+    const angle=flying?Math.max(-35,Math.min(35,ball.vx*.06)):-5;
+    $('hoopMoving').setAttribute('transform',`translate(${point.x} ${point.y}) rotate(${angle}) scale(${point.scale})`);
+    $('hoopMoving').setAttribute('opacity',Math.max(0,Math.min(1,(515-ball.y)/60)));
+    $('hoopShadow').setAttribute('cx',point.x);$('hoopShadow').setAttribute('cy',425-80*Math.min(1,ball.z||0));
+    $('hoopShadow').setAttribute('rx',27*point.scale);$('hoopShadow').setAttribute('opacity',flying ? 0.12 : 0.22);
     $('hoopScore').textContent=score;$('hoopStreak').textContent=streak;$('hoopBest').textContent=best;$('hoopAttempts').textContent=attempts+'회 시도';
   }
   function controls(){
-    $('hoopGame').dataset.phase=phase;
-    $('hoopOverlay').hidden=phase!=='paused';$('hoopPause').hidden=phase==='paused';
+    $('hoopGame').dataset.phase=phase;$('hoopOverlay').hidden=phase!=='paused';$('hoopPause').hidden=phase==='paused';
     $('hoopAction').disabled=['flight','celebrating','missed','aiming'].includes(phase);
-    $('hoopAction').textContent=phase==='paused'?'계속하기':'연습 슛  Space';
-    stage.setAttribute('aria-label',phase==='paused'?'일시 정지된 PDF 자유투':label+' PDF를 잡아 던지세요. 스페이스바로 연습 슛');
+    $('hoopAction').textContent=phase==='paused'?'계속하기':'키보드로 조준';
+    stage.setAttribute('aria-label',phase==='paused'?'일시 정지된 PDF 자유투':label+' PDF를 누르고 위로 끌어 조준. 방향키로 힘과 방향 조절, 스페이스바로 슛');
   }
   function newPaper(){
-    label=labels.filter(name=>name!==label)[Math.floor(Math.random()*(label?3:4))]||'CI';
-    ball={x:c.homeX,y:c.homeY,vx:0,vy:0,age:0,scored:false};drag=null;phase='ready';resultTime=0;
-    $('hoopTrail').setAttribute('d','');$('hoopBurst').setAttribute('opacity',0);$('hoopConfetti').replaceChildren();$('hoopNet').removeAttribute('transform');
+    const next=labels.filter(name=>name!==label);label=next[Math.floor(Math.random()*next.length)];
+    ball=shot(0,0);drag=null;keyboard={dx:0,dy:-140};phase='ready';resultTime=0;
+    $('hoopTrail').setAttribute('d','');$('hoopBurst').setAttribute('opacity',0);$('hoopBurst').setAttribute('transform','translate(450 205)');$('hoopConfetti').replaceChildren();$('hoopNet').removeAttribute('transform');
     particles=[];paper();controls();paint();
   }
   function schedule(){cancelAnimationFrame(frame);last=null;frame=requestAnimationFrame(tick);}
   function celebrate(){
     score++;streak++;if(streak>best){best=streak;try{localStorage.setItem('tradematch.pdf-hoop-best',String(best));}catch{}}
-    phase='celebrating';resultTime=0;$('hoopBurstTitle').textContent=streak>1?streak+'연속 골인!':label+' 골인!';
-    $('hoopMessage').textContent='골인! '+label+'.pdf가 쏙 들어갔어요. '+(streak>1?streak+'번 연속 성공!':'다음 PDF도 도전해 보세요.');
-    $('hoopBurst').setAttribute('opacity',1);$('hoopTrail').setAttribute('d','');
-    if(!reduced)for(let i=0;i<34;i++){
-      const node=svgElement('rect',{width:5,height:9,rx:1,fill:['#3159d9','#e9b64c','#40a68b','#a091dc'][i%4]});
-      $('hoopConfetti').append(node);particles.push({node,x:c.rimX,y:c.rimY-12,vx:(Math.random()-.5)*370,vy:-130-Math.random()*260,rotation:Math.random()*180});
+    phase='celebrating';resultTime=0;$('hoopTrail').setAttribute('d','');
+    $('hoopAnnouncement').textContent=label+' 골인. '+streak+'회 연속 성공.';
+    $('hoopMessage').textContent='PDF를 누르고 위로 끌어 조준해 보세요.';
+    $('hoopBurst').setAttribute('opacity',1);
+    if(!reduced)for(let i=0;i<40;i++){
+      const node=svgElement('rect',{width:4,height:8,rx:1,fill:['#3159d9','#e9b64c','#40a68b','#a091dc'][i%4]});
+      $('hoopConfetti').append(node);particles.push({node,x:c.rimX,y:c.rimY,vx:(Math.random()-.5)*350,vy:-100-Math.random()*230,rotation:Math.random()*180});
     }
     controls();paint();
   }
@@ -1244,62 +1257,58 @@ function createFreeThrowGame(){
     const dt=last===null?0:Math.min(.035,Math.max(0,(time-last)/1000));last=time;
     if(phase==='flight'){
       const event=freeThrowStep(ball,dt);
-      if(event==='goal')celebrate();else if(event==='end'){phase='missed';resultTime=0;streak=0;$('hoopMessage').textContent='아깝다! 점선을 보며 방향과 힘을 조금 바꿔보세요.';controls();}
+      if(event==='goal')celebrate();else if(event==='end'){phase='missed';resultTime=0;streak=0;$('hoopMessage').textContent='방향과 힘을 조금 바꿔서 다시 던져보세요.';controls();}
     }else if(phase==='celebrating'){
       resultTime+=dt;freeThrowStep(ball,dt);
-      $('hoopNet').setAttribute('transform','translate(0 '+(reduced?0:Math.sin(resultTime*27)*Math.max(0,1-resultTime)*5)+')');
-      $('hoopBurst').setAttribute('opacity',Math.min(1,(1.3-resultTime)*3));
-      for(const p of particles){p.x+=p.vx*dt;p.y+=p.vy*dt;p.vy+=600*dt;p.rotation+=170*dt;p.node.setAttribute('transform',`translate(${p.x} ${p.y}) rotate(${p.rotation})`);p.node.setAttribute('opacity',Math.max(0,1-resultTime/1.25));}
+      $('hoopNet').setAttribute('transform',`translate(450 205) scale(1 ${1+(reduced?0:Math.sin(resultTime*22)*Math.max(0,1-resultTime)*.12)}) translate(-450 -205)`);
+      $('hoopBurst').setAttribute('transform',`translate(450 205) scale(${reduced?2:1+resultTime*3})`);
+      $('hoopBurst').setAttribute('opacity',Math.max(0,1-resultTime/(reduced ? 0.6 : 1)));
+      for(const p of particles){p.x+=p.vx*dt;p.y+=p.vy*dt;p.vy+=500*dt;p.rotation+=170*dt;p.node.setAttribute('transform',`translate(${p.x} ${p.y}) rotate(${p.rotation})`);p.node.setAttribute('opacity',Math.max(0,1-resultTime/1.3));}
       if(resultTime>1.3)newPaper();
-    }else{resultTime+=dt;if(resultTime>.75)newPaper();}
+    }else{resultTime+=dt;if(resultTime>.6)newPaper();}
     paint();if(['flight','celebrating','missed'].includes(phase))frame=requestAnimationFrame(tick);
   }
   function point(event){
     if(svg.createSVGPoint&&svg.getScreenCTM){const matrix=svg.getScreenCTM();if(matrix){const p=svg.createSVGPoint();p.x=event.clientX;p.y=event.clientY;return p.matrixTransform(matrix.inverse());}}
     const r=svg.getBoundingClientRect();return {x:(event.clientX-r.left)*900/(r.width||900),y:(event.clientY-r.top)*480/(r.height||480)};
   }
-  function aimed(event){
-    const p=point(event),dx=p.x-drag.start.x,dy=p.y-drag.start.y;
-    return {x:Math.max(42,Math.min(550,c.homeX+dx)),y:Math.max(80,Math.min(420,c.homeY+dy)),vx:Math.max(-850,Math.min(850,dx*3)),vy:Math.max(-1100,Math.min(700,dy*3)),age:0,scored:false};
-  }
+  function aimed(event){const p=point(event);return shot(p.x-drag.start.x,p.y-drag.start.y);}
   function showAim(){
     const points=freeThrowPreview(ball);$('hoopTrail').setAttribute('d',points.map((p,i)=>(i?'L':'M')+p.x.toFixed(1)+' '+p.y.toFixed(1)).join(' '));
   }
   function shoot(){
-    if(Math.hypot(ball.vx,ball.vy)<85){phase='ready';ball={x:c.homeX,y:c.homeY,vx:0,vy:0};$('hoopTrail').setAttribute('d','');$('hoopMessage').textContent='PDF를 골대 쪽으로 조금 더 끌었다가 놓아보세요.';controls();paint();return;}
-    phase='flight';attempts++;$('hoopTrail').setAttribute('d','');$('hoopMessage').textContent=label+'.pdf가 날아갑니다!';controls();schedule();
+    if(Math.hypot(ball.vx,ball.vy)<85){ball=shot(0,0);phase='ready';$('hoopTrail').setAttribute('d','');controls();paint();return;}
+    phase='flight';attempts++;$('hoopTrail').setAttribute('d','');controls();paint();schedule();
   }
   stage.addEventListener('pointerdown',event=>{
     if(phase!=='ready'||event.button>0||event.isPrimary===false||document.hidden)return;
-    const p=point(event);if(Math.hypot(p.x-ball.x,p.y-ball.y)>65)return;
-    event.preventDefault();drag={pointer:event.pointerId,start:p};phase='aiming';stage.setPointerCapture?.(event.pointerId);controls();
+    const p=point(event);if(Math.hypot(p.x-c.homeX,p.y-c.homeY)>55)return;
+    event.preventDefault();drag={pointer:event.pointerId,start:p};ball=shot(0,0);phase='aiming';stage.setPointerCapture?.(event.pointerId);controls();paint();
   });
-  stage.addEventListener('pointermove',event=>{
-    if(phase!=='aiming'||event.pointerId!==drag?.pointer)return;
-    event.preventDefault();ball=aimed(event);showAim();paint();
-  });
-  stage.addEventListener('pointerup',event=>{
-    if(phase!=='aiming'||event.pointerId!==drag?.pointer)return;
-    event.preventDefault();ball=aimed(event);drag=null;stage.releasePointerCapture?.(event.pointerId);shoot();
-  });
+  stage.addEventListener('pointermove',event=>{if(phase!=='aiming'||event.pointerId!==drag?.pointer)return;event.preventDefault();ball=aimed(event);showAim();paint();});
+  stage.addEventListener('pointerup',event=>{if(phase!=='aiming'||event.pointerId!==drag?.pointer)return;event.preventDefault();ball=aimed(event);drag=null;stage.releasePointerCapture?.(event.pointerId);shoot();});
   function cancelAim(event){if(phase==='aiming'&&drag&&event.pointerId===drag.pointer){drag=null;newPaper();}}
   stage.addEventListener('pointercancel',cancelAim);stage.addEventListener('lostpointercapture',cancelAim);
-  function practice(){
+  function resume(){phase=pausedPhase;controls();if(['flight','celebrating','missed'].includes(phase))schedule();}
+  function keyboardAim(){
     if(document.hidden)return;
-    if(phase==='paused'){phase=pausedPhase;controls();if(['flight','celebrating','missed'].includes(phase))schedule();return;}
+    if(phase==='paused'){resume();return;}
     if(phase!=='ready')return;
-    const t=1.15;ball={x:c.homeX,y:c.homeY,vx:(c.rimX-c.homeX)/t,vy:(c.rimY-c.homeY-c.gravity*t*t/2)/t,age:0,scored:false};shoot();stage.focus({preventScroll:true});
+    ball=shot(keyboard.dx,keyboard.dy);showAim();paint();stage.focus({preventScroll:true});
+    $('hoopMessage').textContent='↑ ↓ 힘 조절 · ← → 방향 조절 · Space 던지기';
   }
-  function pause(){
-    if(phase==='paused')return;
-    if(phase==='aiming'){drag=null;newPaper();}
-    pausedPhase=phase;phase='paused';cancelAnimationFrame(frame);last=null;controls();
-  }
-  stage.addEventListener('keydown',event=>{if((event.key===' '||event.key==='Enter')&&!event.repeat){event.preventDefault();practice();}});
-  $('hoopAction').onclick=practice;$('hoopPause').onclick=pause;
-  $('hoopReset').onclick=()=>{cancelAnimationFrame(frame);score=0;streak=0;attempts=0;newPaper();$('hoopMessage').textContent='새 판이에요. PDF를 잡아 던져보세요.';};
-  document.addEventListener('visibilitychange',()=>{if(document.hidden)pause();});
-  newPaper();
+  function pause(){if(phase==='paused')return;if(phase==='aiming'){drag=null;newPaper();}pausedPhase=phase;phase='paused';cancelAnimationFrame(frame);last=null;controls();}
+  stage.addEventListener('keydown',event=>{
+    if(phase==='paused'&&(event.key===' '||event.key==='Enter')){event.preventDefault();if(!event.repeat)resume();return;}
+    if(phase!=='ready')return;
+    if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(event.key)){
+      event.preventDefault();keyboard.dx=Math.max(-180,Math.min(180,keyboard.dx+(event.key==='ArrowLeft'?-5:event.key==='ArrowRight'?5:0)));
+      keyboard.dy=Math.max(-250,Math.min(-40,keyboard.dy+(event.key==='ArrowUp'?-5:event.key==='ArrowDown'?5:0)));keyboardAim();
+    }else if((event.key===' '||event.key==='Enter')&&!event.repeat){event.preventDefault();ball=shot(keyboard.dx,keyboard.dy);shoot();}
+  });
+  $('hoopAction').onclick=keyboardAim;$('hoopPause').onclick=pause;
+  $('hoopReset').onclick=()=>{cancelAnimationFrame(frame);score=0;streak=0;attempts=0;newPaper();$('hoopMessage').textContent='PDF를 누르고 위로 끌어 조준해 보세요.';};
+  document.addEventListener('visibilitychange',()=>{if(document.hidden)pause();});newPaper();
   return {attach(id){if(run!==id){run=id;cancelAnimationFrame(frame);score=0;streak=0;attempts=0;newPaper();}},pause};
 }
 const hoopGame=createFreeThrowGame();

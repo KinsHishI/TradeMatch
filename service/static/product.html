@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>서비스 소개 · TradeMatch</title><link id="productStyles" rel="stylesheet" href="/product.css?v=d279ea6005d1"><script src="/product.js?v=b6d931996853" defer></script>
+<title>서비스 소개 · TradeMatch</title><link id="productStyles" rel="stylesheet" href="/product.css?v=d279ea6005d1"><script src="/product.js?v=7e34925c12c5" defer></script>
 <script id="publishedWorkflow" type="application/json">{"agent_id":"agt_TCjhWz2shafGShpziteyYn","project_id":"proj_e88CHrANRG3JeEdUgt95vf","config_version":24,"decision_node":"최종판정","workflowConfig":{"workflow_name":"TradeMatch · Config 24","documentParseConfiguration":{"customName":"서류묶음"},"documentClassifyConfiguration":{"customName":"Classify/split"},"pipelineEdges":[{"id":"e0","source":{"nodeType":"parse"},"target":{"nodeType":"classify","name":"Classify/split"}},{"id":"e1","source":{"nodeType":"classify","name":"Classify/split"},"target":{"nodeType":"extract","name":"PO_extract_schema"},"condition":{"conditionName":"PO"}},{"id":"e2","source":{"nodeType":"classify","name":"Classify/split"},"target":{"nodeType":"extract","name":"CI_extract_schema"},"condition":{"conditionName":"C/I"}},{"id":"e3","source":{"nodeType":"classify","name":"Classify/split"},"target":{"nodeType":"extract","name":"PL_extract_schema"},"condition":{"conditionName":"P/L"}},{"id":"e4","source":{"nodeType":"classify","name":"Classify/split"},"target":{"nodeType":"extract","name":"BL_extract_schema"},"condition":{"conditionName":"B/L"}},{"id":"e5","source":{"nodeType":"classify","name":"Classify/split"},"target":{"nodeType":"instruct","name":"OTHER_extract_schema"},"condition":{"conditionName":"others"}},{"id":"e6","source":{"nodeType":"extract","name":"PO_extract_schema"},"target":{"nodeType":"merge","name":"병합"}},{"id":"e7","source":{"nodeType":"extract","name":"CI_extract_schema"},"target":{"nodeType":"merge","name":"병합"}},{"id":"e8","source":{"nodeType":"extract","name":"PL_extract_schema"},"target":{"nodeType":"merge","name":"병합"}},{"id":"e9","source":{"nodeType":"extract","name":"BL_extract_schema"},"target":{"nodeType":"merge","name":"병합"}},{"id":"e10","source":{"nodeType":"instruct","name":"OTHER_extract_schema"},"target":{"nodeType":"merge","name":"병합"}},{"id":"e11","source":{"nodeType":"merge","name":"병합"},"target":{"nodeType":"instruct","name":"문서_연결_확인"}},{"id":"e12","source":{"nodeType":"instruct","name":"문서_연결_확인"},"target":{"nodeType":"instruct","name":"PO_CI_상업검증"}},{"id":"e13","source":{"nodeType":"instruct","name":"PO_CI_상업검증"},"target":{"nodeType":"instruct","name":"CI_PL_BL_물류검증"}},{"id":"e14","source":{"nodeType":"instruct","name":"CI_PL_BL_물류검증"},"target":{"nodeType":"instruct","name":"최종판정"}},{"id":"e15","source":{"nodeType":"instruct","name":"최종판정"},"target":{"nodeType":"instruct","name":"검증완료_요약"},"condition":{"conditionName":"PASS"}},{"id":"e16","source":{"nodeType":"instruct","name":"최종판정"},"target":{"nodeType":"instruct","name":"불일치_조치초안"},"condition":{"conditionName":"FAIL"}},{"id":"e17","source":{"nodeType":"instruct","name":"최종판정"},"target":{"nodeType":"instruct","name":"담당자_검토요청"},"condition":{"conditionName":"REQUIRES_HUMAN_REVIEW"}}],"instructConfiguration":{"nodes":[{"name":"OTHER_extract_schema"},{"name":"문서_연결_확인"},{"name":"PO_CI_상업검증"},{"name":"CI_PL_BL_물류검증"},{"name":"최종판정"},{"name":"검증완료_요약"},{"name":"불일치_조치초안"},{"name":"담당자_검토요청"}]}}}</script>
 </head>
 <body>
@@ -102,33 +102,32 @@
 
   <section id="hoopGame" class="hoop-game" aria-labelledby="hoopHeading" hidden>
     <div class="hoop-header"><div><p class="eyebrow">기다리는 동안 한 판</p><h2 id="hoopHeading">PDF 자유투</h2></div><div class="hoop-scores"><div><span>골인</span><strong id="hoopScore">0</strong></div><div><span>연속</span><strong id="hoopStreak">0</strong></div><div><span>최고 연속</span><strong id="hoopBest">0</strong></div></div></div>
-    <div class="hoop-instruction"><p id="hoopInstruction">PDF를 잡고 골대 방향으로 드래그한 뒤 놓아보세요. 점선이 날아갈 길을 알려줘요.</p><span id="hoopAttempts">0회 시도</span></div>
+    <div class="hoop-instruction"><p id="hoopInstruction">PDF를 누른 채 위로 끌어 조준하고 놓으세요. 짧은 점선은 출발 방향만 보여줘요.</p><span id="hoopAttempts">0회 시도</span></div>
     <div id="hoopStage" class="hoop-stage" tabindex="0" role="group" aria-label="PDF 자유투 코트" aria-describedby="hoopInstruction">
       <svg id="hoopSvg" viewBox="0 0 900 480" role="img" aria-labelledby="hoopSceneTitle"><title id="hoopSceneTitle">CI, BL, PO, PL 문서를 잡아 농구 골대에 던지는 PDF 자유투</title>
         <defs><linearGradient id="hoopSky" x2="0" y2="1"><stop stop-color="#f7f9ff"/><stop offset="1" stop-color="#eaf0fd"/></linearGradient><filter id="hoopPaperShadow"><feDropShadow dx="0" dy="5" stdDeviation="5" flood-color="#1d3664" flood-opacity=".14"/></filter></defs>
         <rect width="900" height="480" fill="url(#hoopSky)"/>
-        <path d="M0 430H900V480H0Z" fill="#e1e8f7"/><path d="M0 430H900" stroke="#c7d4eb" stroke-width="2"/>
-        <path d="M85 480Q180 287 291 480M510 480Q714 225 893 480" fill="none" stroke="#c4d2ea" stroke-width="2"/>
-        <path d="M120 455H305M605 455H810" stroke="#f4f7fd" stroke-width="3"/>
-        <text x="40" y="45" fill="#7384a6" font-size="11" letter-spacing="2">TRADEMATCH PAPER COURT</text>
-        <g opacity=".35" fill="none" stroke="#c8d4ed"><rect x="64" y="118" width="62" height="80" rx="6" transform="rotate(-13 95 158)"/><rect x="330" y="70" width="48" height="65" rx="5" transform="rotate(12 354 102)"/></g>
-        <path d="M771 137V430H815" fill="none" stroke="#879bbf" stroke-width="11"/><path d="M744 430H839" stroke="#3d527a" stroke-width="13" stroke-linecap="round"/>
-        <rect x="758" y="71" width="12" height="140" rx="4" fill="white" stroke="#b1c0da" stroke-width="2"/>
-        <path d="M758 139H741V190" fill="none" stroke="#8aa0c4" stroke-width="3"/>
-        <g id="hoopNet"><path d="M662 194L676 254H732L746 194M674 194L685 254M688 194L697 254M704 194V254M720 194L711 254M734 194L723 254M667 214H741M671 235H736" fill="none" stroke="#a3b5d3" stroke-width="1.5" stroke-linejoin="round"/></g>
-        <path d="M662 190H746" fill="none" stroke="#ee8957" stroke-width="7" stroke-linecap="round"/>
-        <text x="678" y="292" fill="#7b8eaf" font-size="11" letter-spacing="1.5">INBOX</text>
-        <ellipse id="hoopShadow" cx="210" cy="430" rx="26" ry="6" fill="#91a6ce" opacity=".22"/>
-        <path id="hoopTrail" fill="none" stroke="#486bd5" stroke-width="3" stroke-dasharray="1 13" stroke-linecap="round" opacity=".7"/>
+        <g fill="white" opacity=".7"><path d="M75 105h92a18 18 0 0 0-28-15 25 25 0 0 0-43 0 14 14 0 0 0-21 15Z"/><path d="M720 143h90a16 16 0 0 0-25-14 24 24 0 0 0-42-1 14 14 0 0 0-23 15Z"/></g>
+        <path d="M0 345H900V480H0Z" fill="#e3eaf6"/><path d="M0 345H900" stroke="#d3def0"/>
+        <path d="M325 345L190 480M575 345L710 480M0 462H900M350 480Q450 382 550 480" fill="none" stroke="#c2d1e9" stroke-width="2"/>
+        <path d="M450 200V342" stroke="#7186a9" stroke-width="12"/><ellipse cx="450" cy="346" rx="50" ry="7" fill="#c7d3e9"/>
+        <rect x="316" y="59" width="268" height="162" rx="7" fill="#253b5f"/>
+        <rect x="325" y="68" width="250" height="144" rx="2" fill="white"/>
+        <rect x="406" y="133" width="88" height="70" rx="1" fill="none" stroke="#899ab8" stroke-width="3"/>
+        <path d="M342 84H396" stroke="#e3e9f3" stroke-width="4" stroke-linecap="round"/>
+        <ellipse cx="450" cy="205" rx="61" ry="11" fill="none" stroke="#c66740" stroke-width="5"/>
+        <ellipse id="hoopShadow" cx="450" cy="425" rx="27" ry="6" fill="#91a6ce" opacity=".22"/>
+        <path id="hoopTrail" fill="none" stroke="#486bd5" stroke-width="3" stroke-dasharray="1 13" stroke-linecap="round" opacity=".65"/>
         <g id="hoopMoving" filter="url(#hoopPaperShadow)"></g>
+        <g id="hoopNet"><path d="M389 207L416 278H484L511 207M401 213L426 278M419 215L438 278M439 216L450 278M460 216L462 278M480 215L474 278M498 212L484 278M397 229Q450 242 503 229M407 254Q450 263 493 254M416 278Q450 283 484 278" fill="none" stroke="#97a9c5" stroke-width="1.5" stroke-linejoin="round"/><path d="M389 205Q450 227 511 205" fill="none" stroke="#ed9361" stroke-width="4.5" stroke-linecap="round"/></g>
         <g id="hoopConfetti" pointer-events="none"></g>
-        <g id="hoopBurst" opacity="0" pointer-events="none"><rect x="587" y="100" width="234" height="54" rx="15" fill="white" opacity=".96"/><text id="hoopBurstTitle" x="704" y="135" fill="#2e53c8" text-anchor="middle" font-size="26" font-weight="800">골인!</text></g>
-        <text id="hoopDocumentName" x="210" y="427" text-anchor="middle" fill="#6d7f9e" font-size="12">CI.pdf</text>
+        <g id="hoopBurst" opacity="0" pointer-events="none" transform="translate(450 205)"><circle r="18" fill="none" stroke="#f0bd5d" stroke-width="2"/><circle r="10" fill="none" stroke="#8ca9ee" stroke-width="1.5"/><path d="M0-27V-34M0 27V34M-27 0H-34M27 0H34M-20-20L-25-25M20-20L25-25M-20 20L-25 25M20 20L25 25" stroke="#f0bd5d" stroke-width="2" stroke-linecap="round"/></g>
+        <text id="hoopDocumentName" x="450" y="459" text-anchor="middle" fill="#6d7f9e" font-size="12">CI.pdf</text>
       </svg>
       <div id="hoopOverlay" class="hoop-overlay" hidden><strong>잠깐 쉬는 중</strong><span>계속하기를 누르면 이어서 할 수 있어요.</span></div>
     </div>
-    <div class="hoop-footer"><p id="hoopMessage" role="status">잡고, 조준하고, 놓으면 슛!</p><div class="action-row"><button id="hoopAction" class="button primary" type="button">연습 슛 Space</button><button id="hoopPause" class="quiet" type="button">잠깐 쉬기</button><button id="hoopReset" class="quiet" type="button">새 판</button></div></div>
-    <p class="hoop-disclaimer">게임은 기다리는 동안 즐기는 기능이에요. 문서 검증 결과와는 관계없어요.</p>
+    <div class="hoop-footer"><p id="hoopMessage" role="status">PDF를 누르고 위로 끌어 조준해 보세요.</p><div class="action-row"><button id="hoopAction" class="button primary" type="button">키보드로 조준</button><button id="hoopPause" class="quiet" type="button">잠깐 쉬기</button><button id="hoopReset" class="quiet" type="button">새 판</button></div></div>
+    <span id="hoopAnnouncement" class="sr-only" role="status" aria-live="polite"></span><p class="hoop-disclaimer">게임은 기다리는 동안 즐기는 기능이에요. 문서 검증 결과와는 관계없어요.</p>
   </section>
 
   <section id="errorView" class="page error-page" aria-labelledby="errorHeading" hidden>
