@@ -1167,28 +1167,55 @@ $('connectionForm').onsubmit = async event => {
   } catch (error) { $('connectionError').textContent = error.message; }
   finally { $('saveConnection').disabled = false; }
 };
-// Frontal court: x/y are shot coordinates; z measures distance toward the hoop.
-// The short aiming guide and the released PDF use the same unassisted physics.
-const PDF_COURT={width:900,height:480,gravity:900,rimX:450,rimY:205,rimHalf:112,radius:11,homeX:450,homeY:405,depthSpeed:.9};
+// The camera looks at a real horizontal rim. z is court depth, not a scoring gate.
+const PDF_COURT={width:900,height:480,gravity:900,rimX:450,rimY:307,rimZ:1,rimHalf:112,radius:11,depthScale:625,horizonY:85,homeX:450,homeY:375,depthSpeed:.9,floorY:565,board:{z:1.32,xMin:166,xMax:734,yMin:30,yMax:374}};
 function freeThrowProjection(ball){
-  const scale=1/(1+Math.max(0,ball.z||0)*.85);
-  return {x:PDF_COURT.rimX+(ball.x-PDF_COURT.rimX)*scale,y:PDF_COURT.rimY+(ball.y-PDF_COURT.rimY)*scale,scale};
+  const c=PDF_COURT,scale=1/(1+Math.max(0,ball.z||0)*.85);
+  return {x:c.rimX+(ball.x-c.rimX)*scale,y:c.horizonY+(ball.y-c.horizonY)*scale,scale};
+}
+function freeThrowAdvance(ball,dt,depth=0){
+  const c=PDF_COURT,old={x:ball.x,y:ball.y,z:ball.z||0,vx:ball.vx,vy:ball.vy,vz:ball.vz??c.depthSpeed};
+  const move=t=>{ball.x=old.x+old.vx*t;ball.y=old.y+old.vy*t+c.gravity*t*t/2;ball.z=old.z+old.vz*t;ball.vy=old.vy+c.gravity*t;ball.vz=old.vz;};
+  // Resolve the first physical event along this short segment.
+  let boardTime=Infinity,goalTime=Infinity;
+  const face=c.board.z-Math.sign(old.vz)*c.radius/c.depthScale;
+  if(old.vz&&((old.vz>0&&old.z<=face)||(old.vz<0&&old.z>=face))){
+    const t=(face-old.z)/old.vz,x=old.x+old.vx*t,y=old.y+old.vy*t+c.gravity*t*t/2;
+    if(t>=0&&t<=dt&&x>=c.board.xMin-c.radius&&x<=c.board.xMax+c.radius&&y>=c.board.yMin-c.radius&&y<=c.board.yMax+c.radius)boardTime=t;
+  }
+  if(!ball.scored){
+    const discriminant=old.vy*old.vy+2*c.gravity*(c.rimY-old.y);
+    if(discriminant>=0){
+      const t=(-old.vy+Math.sqrt(discriminant))/c.gravity;
+      if(t>=0&&t<=dt&&old.vy+c.gravity*t>0){
+        const dx=old.x+old.vx*t-c.rimX,dz=(old.z+old.vz*t-c.rimZ)*c.depthScale;
+        if(Math.hypot(dx,dz)<c.rimHalf-c.radius-4)goalTime=t;
+      }
+    }
+  }
+  if(goalTime<=dt&&goalTime<boardTime){move(goalTime);ball.scored=true;ball.vx*=.12;ball.vz*=.12;ball.vy*=.65;return 'goal';}
+  if(boardTime<=dt&&depth<2){
+    move(boardTime);ball.vz=-old.vz*.72;ball.vx*=.94;ball.vy*=.94;ball.z-=Math.sign(old.vz)*.00001;ball.boardHits=(ball.boardHits||0)+1;
+    return freeThrowAdvance(ball,dt-boardTime,depth+1);
+  }
+  move(dt);
+  if(!ball.scored){
+    // A torus-shaped rim reflects the velocity in x, height, and court depth.
+    const dx=ball.x-c.rimX,dz=(ball.z-c.rimZ)*c.depthScale,radial=Math.hypot(dx,dz),dr=radial-c.rimHalf,dy=ball.y-c.rimY,distance=Math.hypot(dr,dy),tube=c.radius+4;
+    if(radial>0&&distance>0&&distance<tube){
+      const nx=dr/distance*dx/radial,ny=dy/distance,nz=dr/distance*dz/radial,dot=ball.vx*nx+ball.vy*ny+ball.vz*c.depthScale*nz;
+      if(dot<0){ball.vx-=1.65*dot*nx;ball.vy-=1.65*dot*ny;ball.vz-=1.65*dot*nz/c.depthScale;ball.rimHits=(ball.rimHits||0)+1;}
+      const radius=c.rimHalf+dr/distance*tube;
+      ball.x=c.rimX+dx/radial*radius;ball.z=c.rimZ+dz/radial*radius/c.depthScale;ball.y=c.rimY+dy/distance*tube;
+    }
+    if(ball.y+c.radius>=c.floorY&&ball.vy>0){ball.y=c.floorY-c.radius;ball.vy*=-.4;ball.vx*=.75;ball.vz*=.75;ball.floorBounces=(ball.floorBounces||0)+1;}
+  }
+  return null;
 }
 function freeThrowStep(ball,dt){
-  const c=PDF_COURT,old={x:ball.x,y:ball.y,z:ball.z||0};
-  ball.x+=ball.vx*dt;ball.y+=ball.vy*dt+c.gravity*dt*dt/2;ball.vy+=c.gravity*dt;
-  ball.z=old.z+(ball.vz??c.depthSpeed)*dt;ball.age=(ball.age||0)+dt;
-  if(!ball.scored&&!ball.crossed&&old.z<1&&ball.z>=1){
-    ball.crossed=true;
-    const part=(1-old.z)/(ball.z-old.z),x=old.x+(ball.x-old.x)*part,y=old.y+(ball.y-old.y)*part;
-    if(ball.vy>0&&Math.abs(x-c.rimX)<c.rimHalf-c.radius&&Math.abs(y-c.rimY)<28){
-      ball.scored=true;ball.x=x;ball.z=1;ball.vz=0;ball.vx*=.1;return 'goal';
-    }
-    // A shot meeting the backboard or rim rebounds toward the player.
-    const projected=freeThrowProjection({x,y,z:1});
-    if(projected.x>320&&projected.x<580&&projected.y>65&&projected.y<225){ball.z=1;ball.vz=-.3;ball.vx*=.6;ball.vy=Math.max(100,ball.vy*.45);}
-  }
-  return ball.y>515||ball.x>1250||ball.x< -350||ball.z>1.8||ball.age>3.5?'end':null;
+  let remaining=Math.max(0,Math.min(.05,dt));ball.age=(ball.age||0)+remaining;
+  while(remaining>1e-7){const step=Math.min(1/240,remaining),event=freeThrowAdvance(ball,step);remaining-=step;if(event==='goal')return event;}
+  return ball.y>615||ball.x>1250||ball.x< -350||ball.z>2||ball.age>3.5||ball.floorBounces>=2?'end':null;
 }
 function freeThrowPreview(ball){
   const copy={...ball},points=[freeThrowProjection(copy)];
@@ -1202,11 +1229,11 @@ function freeThrowPreview(ball){
 }
 function createFreeThrowGame(){
   const c=PDF_COURT,labels=['CI','BL','PO','PL'],colors={CI:'#3159d9',BL:'#356f8a',PO:'#7661ad',PL:'#b87829'};
-  const stage=$('hoopStage'),svg=$('hoopSvg');
-  let run=null,phase='ready',last=null,frame=0,ball=null,drag=null,score=0,streak=0,best=0,attempts=0,label='',resultTime=0,pausedPhase='ready',particles=[],keyboard={dx:0,dy:-140};
+  const stage=$('hoopStage'),svg=$('hoopSvg'),rim=freeThrowProjection({x:c.rimX,y:c.rimY,z:c.rimZ});
+  let run=null,phase='ready',last=null,frame=0,ball=null,drag=null,score=0,streak=0,best=0,attempts=0,label='',resultTime=0,pausedPhase='ready',particles=[];
   const reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
   try{const value=Number(localStorage.getItem('tradematch.pdf-hoop-best'));if(Number.isInteger(value)&&value>=0&&value<100000)best=value;}catch{}
-  function shot(dx,dy){return {x:c.homeX,y:c.homeY,z:0,vx:Math.max(-650,Math.min(650,dx*2.5)),vy:Math.max(-1000,Math.min(400,dy*4)),vz:c.depthSpeed,age:0,scored:false};}
+  function shot(dx,dy){return {x:c.homeX,y:c.homeY,z:0,vx:Math.max(-650,Math.min(650,-dx*3.2)),vy:Math.max(-1000,Math.min(400,-dy*8)),vz:c.depthSpeed,age:0,scored:false};}
   function paper(){
     const group=$('hoopMoving');group.replaceChildren();
     group.append(svgElement('path',{d:'M -28 -35 H 13 L 29 -19 V 35 H -28 Z',fill:'white',stroke:colors[label],'stroke-width':2}));
@@ -1221,21 +1248,23 @@ function createFreeThrowGame(){
     const point=freeThrowProjection(ball),flying=phase==='flight'||phase==='celebrating'||phase==='missed';
     const angle=flying?Math.max(-35,Math.min(35,ball.vx*.06)):-5;
     $('hoopMoving').setAttribute('transform',`translate(${point.x} ${point.y}) rotate(${angle}) scale(${point.scale})`);
-    $('hoopMoving').setAttribute('opacity',Math.max(0,Math.min(1,(515-ball.y)/60)));
-    $('hoopShadow').setAttribute('cx',point.x);$('hoopShadow').setAttribute('cy',425-80*Math.min(1,ball.z||0));
+    $('hoopMoving').setAttribute('opacity',Math.max(0,Math.min(1,(c.floorY+25-ball.y)/60)));
+    const ground=freeThrowProjection({...ball,y:c.floorY});$('hoopShadow').setAttribute('cx',point.x);$('hoopShadow').setAttribute('cy',ground.y);
     $('hoopShadow').setAttribute('rx',27*point.scale);$('hoopShadow').setAttribute('opacity',flying ? 0.12 : 0.22);
+    const net=$('hoopNet'),paper=$('hoopMoving');
+    if(ball.scored||ball.z>=c.rimZ){if(net.previousElementSibling!==paper)svg.insertBefore(paper,net);}
+    else if(paper.previousElementSibling!==net)svg.insertBefore(net,paper);
     $('hoopScore').textContent=score;$('hoopStreak').textContent=streak;$('hoopBest').textContent=best;$('hoopAttempts').textContent=attempts+'회 시도';
   }
   function controls(){
     $('hoopGame').dataset.phase=phase;$('hoopOverlay').hidden=phase!=='paused';$('hoopPause').hidden=phase==='paused';
-    $('hoopAction').disabled=['flight','celebrating','missed','aiming'].includes(phase);
-    $('hoopAction').textContent=phase==='paused'?'계속하기':'키보드로 조준';
-    stage.setAttribute('aria-label',phase==='paused'?'일시 정지된 PDF 자유투':label+' PDF를 누르고 위로 끌어 조준. 방향키로 힘과 방향 조절, 스페이스바로 슛');
+    $('hoopResume').hidden=phase!=='paused';
+    stage.setAttribute('aria-label',phase==='paused'?'일시 정지된 PDF 자유투':label+' PDF를 누른 채 아래로 당겼다가 놓으면 반대 방향으로 발사');
   }
   function newPaper(){
     const next=labels.filter(name=>name!==label);label=next[Math.floor(Math.random()*next.length)];
-    ball=shot(0,0);drag=null;keyboard={dx:0,dy:-140};phase='ready';resultTime=0;
-    $('hoopTrail').setAttribute('d','');$('hoopBurst').setAttribute('opacity',0);$('hoopBurst').setAttribute('transform','translate(450 205)');$('hoopConfetti').replaceChildren();$('hoopNet').removeAttribute('transform');
+    ball=shot(0,0);drag=null;phase='ready';resultTime=0;
+    $('hoopTrail').setAttribute('d','');$('hoopPull').setAttribute('d','');$('hoopAnnouncement').textContent='';$('hoopBurst').setAttribute('opacity',0);$('hoopBurst').setAttribute('transform','translate(450 205)');$('hoopConfetti').replaceChildren();$('hoopNet').removeAttribute('transform');
     particles=[];paper();controls();paint();
   }
   function schedule(){cancelAnimationFrame(frame);last=null;frame=requestAnimationFrame(tick);}
@@ -1243,11 +1272,11 @@ function createFreeThrowGame(){
     score++;streak++;if(streak>best){best=streak;try{localStorage.setItem('tradematch.pdf-hoop-best',String(best));}catch{}}
     phase='celebrating';resultTime=0;$('hoopTrail').setAttribute('d','');
     $('hoopAnnouncement').textContent=label+' 골인. '+streak+'회 연속 성공.';
-    $('hoopMessage').textContent='PDF를 누르고 위로 끌어 조준해 보세요.';
+    $('hoopMessage').textContent='PDF를 아래로 당겼다가 놓아보세요.';
     $('hoopBurst').setAttribute('opacity',1);
     if(!reduced)for(let i=0;i<40;i++){
       const node=svgElement('rect',{width:4,height:8,rx:1,fill:['#3159d9','#e9b64c','#40a68b','#a091dc'][i%4]});
-      $('hoopConfetti').append(node);particles.push({node,x:c.rimX,y:c.rimY,vx:(Math.random()-.5)*350,vy:-100-Math.random()*230,rotation:Math.random()*180});
+      $('hoopConfetti').append(node);particles.push({node,x:rim.x,y:rim.y,vx:(Math.random()-.5)*350,vy:-100-Math.random()*230,rotation:Math.random()*180});
     }
     controls();paint();
   }
@@ -1275,8 +1304,10 @@ function createFreeThrowGame(){
   function aimed(event){const p=point(event);return shot(p.x-drag.start.x,p.y-drag.start.y);}
   function showAim(){
     const points=freeThrowPreview(ball);$('hoopTrail').setAttribute('d',points.map((p,i)=>(i?'L':'M')+p.x.toFixed(1)+' '+p.y.toFixed(1)).join(' '));
+    if(drag)$('hoopPull').setAttribute('d',`M ${c.homeX} ${c.homeY} L ${c.homeX-ball.vx/3.2} ${c.homeY-ball.vy/8}`);
   }
   function shoot(){
+    $('hoopPull').setAttribute('d','');
     if(Math.hypot(ball.vx,ball.vy)<85){ball=shot(0,0);phase='ready';$('hoopTrail').setAttribute('d','');controls();paint();return;}
     phase='flight';attempts++;$('hoopTrail').setAttribute('d','');controls();paint();schedule();
   }
@@ -1290,24 +1321,9 @@ function createFreeThrowGame(){
   function cancelAim(event){if(phase==='aiming'&&drag&&event.pointerId===drag.pointer){drag=null;newPaper();}}
   stage.addEventListener('pointercancel',cancelAim);stage.addEventListener('lostpointercapture',cancelAim);
   function resume(){phase=pausedPhase;controls();if(['flight','celebrating','missed'].includes(phase))schedule();}
-  function keyboardAim(){
-    if(document.hidden)return;
-    if(phase==='paused'){resume();return;}
-    if(phase!=='ready')return;
-    ball=shot(keyboard.dx,keyboard.dy);showAim();paint();stage.focus({preventScroll:true});
-    $('hoopMessage').textContent='↑ ↓ 힘 조절 · ← → 방향 조절 · Space 던지기';
-  }
   function pause(){if(phase==='paused')return;if(phase==='aiming'){drag=null;newPaper();}pausedPhase=phase;phase='paused';cancelAnimationFrame(frame);last=null;controls();}
-  stage.addEventListener('keydown',event=>{
-    if(phase==='paused'&&(event.key===' '||event.key==='Enter')){event.preventDefault();if(!event.repeat)resume();return;}
-    if(phase!=='ready')return;
-    if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(event.key)){
-      event.preventDefault();keyboard.dx=Math.max(-180,Math.min(180,keyboard.dx+(event.key==='ArrowLeft'?-5:event.key==='ArrowRight'?5:0)));
-      keyboard.dy=Math.max(-250,Math.min(-40,keyboard.dy+(event.key==='ArrowUp'?-5:event.key==='ArrowDown'?5:0)));keyboardAim();
-    }else if((event.key===' '||event.key==='Enter')&&!event.repeat){event.preventDefault();ball=shot(keyboard.dx,keyboard.dy);shoot();}
-  });
-  $('hoopAction').onclick=keyboardAim;$('hoopPause').onclick=pause;
-  $('hoopReset').onclick=()=>{cancelAnimationFrame(frame);score=0;streak=0;attempts=0;newPaper();$('hoopMessage').textContent='PDF를 누르고 위로 끌어 조준해 보세요.';};
+  $('hoopResume').onclick=resume;$('hoopPause').onclick=pause;
+  $('hoopReset').onclick=()=>{cancelAnimationFrame(frame);score=0;streak=0;attempts=0;newPaper();$('hoopMessage').textContent='PDF를 아래로 당겼다가 놓아보세요.';};
   document.addEventListener('visibilitychange',()=>{if(document.hidden)pause();});newPaper();
   return {attach(id){if(run!==id){run=id;cancelAnimationFrame(frame);score=0;streak=0;attempts=0;newPaper();}},pause};
 }
