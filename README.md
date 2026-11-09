@@ -3,6 +3,17 @@
 GitHub 코드 저장소 → Railway Docker 서비스 한 개 → Upstage Studio.
 화면과 Python API를 함께 제공하고, 파일과 기록은 Volume에 보관한다.
 
+## 현재 연결 대상 (2026-11-10)
+
+- Agent: `agt_TCjhWz2shafGShpziteyYn`
+- Project: `proj_e88CHrANRG3JeEdUgt95vf`
+- Config: `24`
+- 판정 노드: `최종판정`
+
+Docker 기본값과 소개 페이지의 구조도는 이 Export를 기준으로 준비했다. Railway Variables에 이전 Agent·Config가 등록되어 있으면 해당 값이 우선하므로 위 값으로 변경한다. `railway-variables.example`에는 입력할 변수 이름과 공개 가능한 식별자만 있으며, API 키·접속 암호·도메인 값은 비어 있다. 비밀값은 Railway에서 직접 입력한다.
+
+소개 페이지에는 실제 노드 이름·연결선·분기만 포함하며 전체 프롬프트·추출 스키마는 공개하지 않는다. PASS의 최종 비교값이 생략된 경우, Studio 연결 결과가 실제 Extract와 일치하는 문서만 원문 참고 자료로 표시한다. 누적 수량 검사는 포함된 여러 송장을 따로 볼 수 있고, 개별 송장 수량을 전체 발주 수량과 직접 비교한 불일치로 표시하지 않는다. Studio의 원본 판정은 변경하지 않는다.
+
 이 폴더에는 실행 코드와 배포 설정만 포함한다. API 키, 접속 암호, 원본 PDF, 로컬 검증 기록, 기대값, Studio 원시 응답, 과거 워크플로우 Export는 포함하지 않는다.
 
 ## 공개 범위
@@ -41,6 +52,8 @@ GitHub 저장소에 이 폴더를 연결한다. 저장소 공개 여부와 서�
 | PORT | Railway가 제공하는 값. 지정하지 않으면 8080 |
 
 RAILWAY_VOLUME_MOUNT_PATH는 Volume 연결 시 Railway가 제공한다. Railway에서는 Volume이 없거나 기록 경로가 Volume 밖이면 시작을 중단한다. 새 빈 Volume으로 시작한다. 로컬 settings.json을 복사하지 않는다.
+
+Settings의 Healthcheck Path가 비어 있으면 `/api/health`를 직접 지정한다. 대상 포트는 `8080`, 실행 복제본은 1개로 유지한다. `railway.toml` 자동 적용 여부와 별개로 실제 화면 설정을 확인한다.
 
 Agent·Project·Config는 서버 환경변수로 고정한다. 화면의 설정 변경 요청은 거절한다. 환경을 바꿀 때에는 Variables를 수정하고 재배포한다. 로컬 JSON 수정은 원격 Studio 워크플로우를 변경하지 않는다.
 

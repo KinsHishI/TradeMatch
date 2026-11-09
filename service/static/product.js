@@ -73,6 +73,7 @@ function notice(message = '') {
 function showPage(id) {
   if(guidedReview)closeGuidedReview(false);
   closeReport(false);
+  if($('workflowDialog').open)closeWorkflow(false);
   if(id!=='progressView'&&id!=='gameView')stackGame.pause();
   for (const page of document.querySelectorAll('.page')) page.hidden = page.id !== id;
 }
@@ -356,8 +357,11 @@ function fieldLocation(meta) {
   return region ? {page:meta.page, boxes:[region], precision:'region'} : {page:meta.page, boxes:[], precision:'page'};
 }
 function attachLocations(source, raw) {
-  const native = [];
+  const native = [], linked = [];
   for (const step of Array.isArray(raw?.output) ? raw.output : []) {
+    if(String(step.model||'').endsWith('문서_연결_확인'))for(const block of step.content||[]){
+      const data=referenceData(block.text);if(Array.isArray(data?.documents))linked.push(...data.documents);
+    }
     if (step.step_type !== 'information-extract' && !String(step.model || '').startsWith('Information Extract - ')) continue;
     for (const block of step.content || []) {
       const data = unpack(block.text), meta = unpack(block.additional_values);
@@ -368,9 +372,26 @@ function attachLocations(source, raw) {
   }
   return {...source, documents:source.documents.map(document => {
     const key = {PO:'po_number',CI:'invoice_number',PL:'packing_list_number',BL:'bl_number'}[document.kind];
-    const matches = native.filter(item => item.key === key && item.data[key] === document.document_id);
-    return {...document, locationMeta:matches.length === 1 ? matches[0].meta : null};
+    const matches = native.filter(item => item.key === key && item.data[key] === document.document_id && sameSourceData(item.data,document.data)&&
+      (!document.page||!item.meta.page_ranges?.length||item.meta.page_ranges.some(range=>range[0]<=document.page&&range[1]>=document.page)));
+    const aliases=linked.filter(item=>item.document_type===document.kind&&sameSourceData(item.extract,document.data));
+    return {...document, source_key:aliases.length===1?aliases[0].source_key:null, locationMeta:matches.length === 1 ? matches[0].meta : null};
   })};
+}
+function referenceData(value){
+  // Display-only document binding; never used to parse or repair the final verdict.
+  for(let i=0;i<8&&typeof value==='string';i++){
+    try{value=JSON.parse(value);}catch{
+      const text=value.replace(/(?:\s*【[^】]*】)+\s*$/,'');if(text===value)return null;
+      try{value=JSON.parse(text);}catch{return null;}
+    }
+  }
+  return value;
+}
+function sameSourceData(a,b){
+  if(a===b)return true;
+  if(!a||!b||typeof a!=='object'||typeof b!=='object'||Array.isArray(a)!==Array.isArray(b))return false;
+  const keys=Object.keys(a);return keys.length===Object.keys(b).length&&keys.every(key=>Object.hasOwn(b,key)&&sameSourceData(a[key],b[key]));
 }
 function exactAnchor(document, value) {
   if (!document || !document.locationMeta) return null;
@@ -392,6 +413,32 @@ function refsFor(check) {
     if (seen.has(key)) continue; seen.add(key);
     const document = documentFor(value.document);
     refs.push({key, value, document, anchor:exactAnchor(document,value)});
+  }
+  return refs.length?refs:passSourceRefs(check);
+}
+function passSourceRefs(check){
+  if(check.result!=='PASS')return [];
+  const id=String(check.check_id||'').toUpperCase(),refs=[];
+  for(const token of check.documents||[]){
+    const doc=documentFor(token);if(!doc)continue;
+    const item=/^([A-Z]+:\d+):items\[(\d+)\]$/.exec(token);
+    let fields=[];
+    if(item){
+      const leaves=/QUANTITY_UNIT/.test(id)?['quantity_unit']:/QUANTITY|QTY/.test(id)?['quantity']:/UNIT_PRICE/.test(id)?['unit_price','price_basis']:/IDENTITY|ITEM_MAPPING/.test(id)?['sku','model']:[];
+      fields=leaves.map(leaf=>'items['+item[2]+'].'+leaf);
+    }else if(/INVOICE_TOTAL/.test(id))fields=['invoice_total'];
+    else if(/CURRENCY/.test(id))fields=['currency'];
+    else if(/PACKAGE_COUNT/.test(id))fields=['total_packages'];
+    else if(/PACKAGE_UNIT/.test(id))fields=['package_unit'];
+    else if(/GROSS_WEIGHT/.test(id))fields=['gross_weight'];
+    else if(/WEIGHT_UNIT/.test(id))fields=['weight_unit'];
+    else if(/DOCUMENT_LINK/.test(id))fields=[{PO:'po_number',CI:'invoice_number',PL:'packing_list_number',BL:'bl_number'}[doc.kind]];
+    for(const field of fields.filter(Boolean)){
+      const value=pathValue(doc.data,field);if(value===undefined)continue;
+      const leaf=field.split('.').pop(),unit=leaf==='quantity'?pathValue(doc.data,field.replace(/quantity$/,'quantity_unit')):leaf==='unit_price'||leaf==='invoice_total'?doc.data.currency:leaf==='gross_weight'?doc.data.weight_unit:leaf==='total_packages'?doc.data.package_unit:null;
+      const original={document:doc.document_id,field,value,unit:unit??null};
+      refs.push({key:token+':'+field,value:original,document:doc,anchor:exactAnchor(doc,original),sourceContext:true});
+    }
   }
   return refs;
 }
@@ -431,12 +478,23 @@ function preferredPairRefs(check, refs) {
   return [...groups.values()];
 }
 function pairCaption(ref){return fieldLabel(ref.value.field.replace(/_raw$/,''));}
+function missingDocumentKind(check){
+  if(check.result!=='REQUIRES_HUMAN_REVIEW')return null;
+  const id=String(check.check_id||'').toUpperCase();
+  return ['PO','CI','PL','BL'].find(kind=>currentRow?.analysis?.result?.document_counts?.[kind]===0&&
+    !currentSource?.documents?.some(document=>document.kind===kind)&&
+    (/DOC_|DOCUMENT|EXIST|MISSING/.test(id)||new RegExp('(^|_)'+kind+'(_|$)').test(id)))||null;
+}
 function comparisonModels(check, refs) {
   const candidates=preferredPairRefs(check,refs), total=candidates.find(ref=>ref.value.field==='invoice_total');
-  const absent=['PO','CI','PL','BL'].find(kind=>currentRow?.analysis?.result?.document_counts?.[kind]===0&&!currentSource.documents.some(document=>document.kind===kind));
-  if(check.result==='REQUIRES_HUMAN_REVIEW'&&absent&&/DOC_|DOCUMENT|EXIST|MISSING/.test(String(check.check_id).toUpperCase())){
+  const absent=missingDocumentKind(check);
+  if(absent){
     const kind={BL:'PL',PL:'CI',CI:'PO',PO:'CI'}[absent],document=currentSource.documents.find(document=>document.kind===kind)||currentSource.documents[0]||null;
     return [{key:'missing-document',relation:'context',label:'필수 문서 확인',left:{document,refs:candidates.filter(ref=>ref.document===document),role:'제공된 원문'},right:{document:null,refs:[],role:'미제공 문서',missingKind:absent},links:[]}];
+  }
+  if(/CUMULATIVE/.test(String(check.check_id).toUpperCase())){
+    const po=candidates.filter(ref=>ref.document?.kind==='PO'&&/\.quantity$/.test(ref.value.field)),ci=candidates.filter(ref=>ref.document?.kind==='CI'&&/\.quantity$/.test(ref.value.field));
+    if(po.length===1&&ci.length)return ci.map((ref,index)=>({key:'cumulative:'+ref.key,relation:'cumulative',label:'송장 '+(index+1)+' / '+ci.length+' · '+ref.document.document_id,left:{document:po[0].document,refs:po,role:'발주 수량'},right:{document:ref.document,refs:[ref],role:'누적 검사에 포함된 송장'},links:[],sourceCount:ci.length}));
   }
   if(/INVOICE_TOTAL|CI_TOTAL/.test(String(check.check_id).toUpperCase())&&total){
     const inputs=candidates.filter(ref=>ref.value.document===total.value.document&&/\.quantity$|\.unit_price$/.test(ref.value.field));
@@ -459,15 +517,15 @@ function comparisonModels(check, refs) {
     if(check.result==='FAIL'){
       const different=output.filter(pair=>JSON.stringify(pair.left.refs[0].value.value)!==JSON.stringify(pair.right.refs[0].value.value)||pair.left.refs[0].value.unit!==pair.right.refs[0].value.unit);
       const discrepancies=currentRow?.analysis?.result?.issues?.filter(issue=>issue.type==='DISCREPANCY')||[];
-      const confirmed=different.filter(pair=>discrepancies.some(issue=>[pair.left.refs[0],pair.right.refs[0]].every(ref=>issue.documents.includes(ref.value.document)&&issue.fields.includes(ref.value.field))));
+      const confirmed=different.filter(pair=>discrepancies.some(issue=>[pair.left.refs[0],pair.right.refs[0]].every(ref=>issue.documents.some(id=>id===ref.value.document||documentFor(id)===ref.document)&&issue.fields.includes(ref.value.field))));
       if(confirmed.length)return confirmed;
       return output.map(pair=>({...pair,relation:'context',links:[]}));
     }
     if(check.result==='REQUIRES_HUMAN_REVIEW')output.sort((a,b)=>Number([...b.left.refs,...b.right.refs].some(ref=>ref.value.value===''||ref.value.value===null))-Number([...a.left.refs,...a.right.refs].some(ref=>ref.value.value===''||ref.value.value===null)));
     return output;
   }
-  const documents=[...new Set(candidates.map(ref=>ref.document).filter(Boolean))].sort((a,b)=>(order[a.kind]??9)-(order[b.kind]??9));
-  const missingKind=['PO','CI','PL','BL'].find(kind=>currentRow?.analysis?.result?.document_counts?.[kind]===0&&!currentSource.documents.some(document=>document.kind===kind));
+  const documents=[...new Set([...candidates.map(ref=>ref.document),...(check.documents||[]).map(documentFor)].filter(Boolean))].sort((a,b)=>(order[a.kind]??9)-(order[b.kind]??9));
+  const missingKind=missingDocumentKind(check);
   return [{key:'source-context',relation:'context',label:'선택 검사의 원문',left:{document:documents[0]||null,refs:candidates.filter(ref=>ref.document===documents[0]),role:'검사 근거'},right:{document:documents[1]||null,refs:candidates.filter(ref=>documents[1]&&ref.document===documents[1]),role:'검사 근거',missingKind:documents[1]?null:missingKind},links:[]}];
 }
 function activateCheck(check, preferred = null) {
@@ -516,7 +574,7 @@ function paintReviewCard() {
   const scope=reviewFilter==='all'?'전체 항목':reviewFilter==='attention'?'확인할 항목':reviewFilter==='REQUIRES_HUMAN_REVIEW'?'검토 필요':statusLabel(reviewFilter);
   $('reviewControlLabel').textContent='↑ '+scope+' '+(index+1)+' / '+checks.length+' · '+friendly(activeCheck);
   $('reviewAll').hidden=reviewFilter==='all';$('reviewAll').textContent='전체 '+all.length+'개 항목 보기';
-  $('checkDocuments').textContent=(activeCheck.documents||[]).map(id=>{const doc=documentFor(id);return doc?(documentLabel[doc.kind]||doc.kind)+' '+id:id;}).join(' · ');
+  $('checkDocuments').textContent=(activeCheck.documents||[]).map(documentCaption).join(' · ');
   if(renderedReviewCheck!==activeCheck){
     renderedReviewCheck=activeCheck;
     $('reasonDetails').open=false;
@@ -559,6 +617,8 @@ function comparisonGuide(model) {
   const missing=model.right.missingKind||model.left.missingKind;
   if(missing)return '이번 PDF에서 '+name({kind:missing})+'을 찾지 못했어요. 필요한 서류가 모두 들어 있는지 확인해 주세요.';
   const refs=[...model.left.refs,...model.right.refs];
+  if(model.relation==='cumulative')return '이 검사는 송장 '+model.sourceCount+'건의 누적 수량을 확인한 결과예요. '+(model.sourceCount>1?'탭을 넘기며 각 송장을 살펴보세요. ':'')+'한 송장의 수량과 발주 수량의 차이만으로 판정하지 않아요.';
+  if(refs.some(ref=>ref.sourceContext))return '일치로 판정된 항목이에요. 세부 비교 근거가 제공되지 않아, 연결된 문서의 참고 원문을 보여드려요.';
   const blank=refs.find(ref=>ref.value.value===''||ref.value.value===null);
   if(blank)return name(blank.document)+'에서 '+fieldLabel(blank.value.field)+' 값을 확인하지 못했어요. 문서 원본을 살펴봐 주세요.';
   if(model.relation==='calculation')return '비교한 송장 합계는 '+comparisonValue(model.right.refs[0])+'예요. '+(model.calculation?'계산한 합계는 '+model.calculation.value+' '+model.calculation.unit+'예요. ':'')+'아래 품목 내역과 총액을 함께 확인해 보세요.';
@@ -572,14 +632,15 @@ function comparisonGuide(model) {
 function makePaper(side,model,session){
   const prefix='compare'+side,doc=model.document,refs=model.refs||[],page=refs.find(ref=>ref.anchor?.page)?.anchor.page||doc?.page||1;
   const article=$(prefix+'Paper'),stage=$(prefix+'Stage'),overlay=$(prefix+'Overlay');
-  article.className='comparison-paper '+(comparisonModel.relation==='context'||comparisonModel.relation==='calculation'&&side==='Left'?'supporting':statusTone(activeCheck.result));
+  article.className='comparison-paper '+(comparisonModel.relation==='context'||comparisonModel.relation==='cumulative'||refs.some(ref=>ref.sourceContext)||comparisonModel.relation==='calculation'&&side==='Left'?'supporting':statusTone(activeCheck.result));
   $(prefix+'Title').textContent=doc?(documentLabel[doc.kind]||doc.kind)+(comparisonModel.relation==='documents'?'':' · '+model.role):model.missingKind?documentLabel[model.missingKind]+' 미제공':'비교할 문서 확인이 필요해요';
   $(prefix+'Meta').textContent=doc?doc.document_id+' · '+page+'페이지':'';
   $(prefix+'Value').textContent=refs.length===1?comparisonValue(refs[0]):refs.length?'검사에 사용한 항목 '+refs.length+'곳':'';
   $(prefix+'Field').textContent=refs.length===1?pairCaption(refs[0]):model.role;
   $(prefix+'Open').hidden=!doc||!currentSource.has_pdf;
   if(doc&&currentSource.has_pdf)$(prefix+'Open').href=currentSource.pdf_url+'#page='+page;
-  stage.classList.toggle('enlarged',compareZoom);overlay.replaceChildren();
+  stage.style.width='';stage.dataset.view='';stage.classList.toggle('enlarged',compareZoom);overlay.replaceChildren();
+  $(prefix+'Viewport').scrollTop=0;$(prefix+'Viewport').scrollLeft=0;
   let precise=0;
   refs.forEach((ref,index)=>{
     if(ref.anchor?.page!==page)return;
@@ -589,24 +650,49 @@ function makePaper(side,model,session){
       const title=svgElement('title');title.textContent=pairCaption(ref)+' · '+comparisonValue(ref);rect.append(title);overlay.append(rect);
     }
   });
-  $(prefix+'Note').textContent=!doc?(model.missingKind?'해당 문서가 제공되지 않아 비교할 원문이 없습니다.':'이 검사에서 대응 원문을 확정할 수 없습니다.'):!refs.length?'이 항목이 적힌 위치를 찾지 못했어요.':!precise?'정확한 위치를 찾지 못해 해당 페이지 전체를 보여드려요.':comparisonModel.relation==='calculation'&&side==='Left'?'네모 안의 수량과 단가로 합계를 확인했어요. 표시된 값이 모두 틀렸다는 뜻은 아니에요.':'네모 안이 이번에 확인한 부분이에요.';
+  $(prefix+'Note').textContent=!doc?(model.missingKind?'해당 문서가 제공되지 않아 비교할 원문이 없습니다.':'이 검사에서 대응 원문을 확정할 수 없습니다.'):!precise?'표시할 위치를 찾지 못했어요. 페이지 전체에서 확인하거나 원문을 확대해 주세요.':comparisonModel.relation==='calculation'&&side==='Left'?'네모 안의 수량과 단가로 합계를 확인했어요. 표시된 값이 모두 틀렸다는 뜻은 아니에요.':'네모 안이 이번에 확인한 부분이에요. 스크롤로 주변 내용도 살펴볼 수 있어요.';
+  if(precise&&refs.some(ref=>ref.sourceContext))$(prefix+'Note').textContent='연결된 문서의 참고 위치예요. 이 항목의 세부 비교 근거는 제공되지 않았어요.';
+  $(prefix+'Fit').hidden=!doc||!currentSource.preview_url;
+  $(prefix+'Viewport').setAttribute('tabindex','0');$(prefix+'Viewport').setAttribute('role','region');
+  $(prefix+'Viewport').setAttribute('aria-label',(doc?documentLabel[doc.kind]||doc.kind:'문서')+' 원문 · 스크롤로 이동');
   const old=$(prefix+'Image'),image=element('img');image.id=prefix+'Image';image.alt=doc?(documentLabel[doc.kind]||doc.kind)+' '+page+'페이지 원문':'비교할 원문 없음';image.hidden=true;old.replaceWith(image);
   const empty=$(prefix+'Empty');empty.hidden=false;empty.textContent=!doc?(model.missingKind?documentLabel[model.missingKind]+' 문서가 없습니다.':'이 검사에 대응하는 두 번째 원문이 없습니다.'):!currentSource.has_pdf?'원본 PDF가 보관되어 있지 않습니다.':'원문 페이지를 불러오고 있습니다.';
   article.dataset.page=page;
-  image.onload=()=>{if(session!==pairSession)return;image.hidden=false;empty.hidden=true;focusPaper(side,model,page);scheduleComparisonLines();};
+  image.onload=()=>{if(session!==pairSession)return;image.hidden=false;empty.hidden=true;setPaperView(side,precise||compareZoom?'detail':'page');scheduleComparisonLines();};
   image.onerror=()=>{if(session!==pairSession)return;empty.hidden=false;empty.textContent='미리보기를 준비하지 못했습니다. 원본 PDF를 열어 확인해주세요.';scheduleComparisonLines();};
   if(doc&&currentSource.has_pdf&&currentSource.preview_url)image.src=currentSource.preview_url+'?page='+page;
   else if(doc&&currentSource.has_pdf)empty.textContent='원본 이미지 위치를 준비하지 못했습니다. 원본 PDF를 열어 확인해주세요.';
 }
+function setPaperView(side,view){
+  const prefix='compare'+side,image=$(prefix+'Image'),stage=$(prefix+'Stage'),viewport=$(prefix+'Viewport');
+  if(image.hidden)return;
+  stage.dataset.view=view;stage.classList.toggle('enlarged',view==='detail'&&compareZoom);
+  if(view==='page'){
+    const ratio=image.naturalWidth/image.naturalHeight;
+    stage.style.width=Math.max(1,Math.min(viewport.clientWidth-2,(viewport.clientHeight-2)*ratio))+'px';
+    viewport.scrollTop=0;viewport.scrollLeft=0;
+  }else{
+    stage.style.width='';viewport.scrollTop=0;viewport.scrollLeft=0;
+    focusPaper(side,comparisonModel[side.toLowerCase()],Number($(prefix+'Paper').dataset.page));
+  }
+  $(prefix+'Fit').textContent=view==='page'?'원문 확대':'페이지 전체';
+  $(prefix+'Fit').setAttribute('aria-label',(view==='page'?'원문 확대':'페이지 전체 보기')+' · '+$(prefix+'Title').textContent);
+  $(prefix+'Fit').setAttribute('aria-pressed',String(view==='page'));
+  scheduleComparisonLines();
+}
 function focusPaper(side,model,page){
   const image=$('compare'+side+'Image'),viewport=$('compare'+side+'Viewport'),box=model.refs.find(ref=>ref.anchor?.page===page&&ref.anchor.boxes.length)?.anchor.boxes[0];
-  if(!box||image.hidden)return;
+  if(image.hidden)return;
+  if(!box){viewport.scrollTop=0;viewport.scrollLeft=0;return;}
   viewport.scrollTop=Math.max(0,(box.y+box.height/2)*image.clientHeight-viewport.clientHeight*.45);
   viewport.scrollLeft=Math.max(0,(box.x+box.width/2)*image.clientWidth-viewport.clientWidth*.5);
 }
 function paintComparison(model){
   if(!model||!currentRow)return;
   comparisonModel=model;const session=++pairSession;
+  const single=Boolean(model.left.document&&!model.right.document&&!model.right.missingKind);
+  $('comparisonBoard').dataset.single=String(single);$('compareRightPaper').hidden=single;
+  document.querySelector('.comparison-quick-values').hidden=single;
   $('comparisonWorkspace').className='comparison-workspace '+statusTone(activeCheck.result);
   $('comparisonTitle').textContent=friendly(activeCheck);
   $('comparisonStatus').textContent=statusLabel(activeCheck.result);$('comparisonStatus').className='status-pill '+statusTone(activeCheck.result);
@@ -621,7 +707,7 @@ function paintComparison(model){
   $('compareCheckSelect').replaceChildren();orderedChecks(checks).forEach((check,index)=>{const option=element('option',(index+1)+'. '+statusLabel(check.result)+' · '+friendly(check));option.value=checks.indexOf(check);option.selected=check===activeCheck;$('compareCheckSelect').append(option);});
   $('comparisonPairs').replaceChildren();$('comparisonPairs').hidden=comparisonPairs.length<2;
   for(const pair of comparisonPairs){const button=element('button',pair.label,'pair-choice'+(pair.key===model.key?' active':''));button.type='button';button.setAttribute('aria-pressed',String(pair.key===model.key));button.onclick=()=>paintComparison(pair);$('comparisonPairs').append(button);}
-  $('compareZoom').textContent=compareZoom?'페이지 전체 보기':'표시된 부분 확대';$('compareZoom').setAttribute('aria-pressed',String(compareZoom));
+  $('compareZoom').textContent=compareZoom?'기본 크기':'크게 보기';$('compareZoom').setAttribute('aria-pressed',String(compareZoom));
   $('comparisonLines').replaceChildren();makePaper('Left',model.left,session);makePaper('Right',model.right,session);
   for(const side of ['Left','Right']){
     $('quick'+side+'Title').textContent=$('compare'+side+'Title').textContent;
@@ -640,7 +726,7 @@ function visibleEndpoint(side,index){
 }
 function drawComparisonLines(){
   const overlay=$('comparisonLines');overlay.replaceChildren();
-  if(!comparisonModel||$('resultView').hidden)return;
+  if(!comparisonModel||$('resultView').hidden||[...comparisonModel.left.refs,...comparisonModel.right.refs].some(ref=>ref.sourceContext))return;
   const board=$('comparisonBoard').getBoundingClientRect();if(!board.width||!board.height)return;
   overlay.setAttribute('viewBox','0 0 '+board.width+' '+board.height);
   overlay.setAttribute('class','comparison-lines '+(comparisonModel.relation==='calculation'?'supporting':statusTone(activeCheck.result)));
@@ -683,7 +769,7 @@ $('guidedDialog').addEventListener('cancel',event=>{event.preventDefault();close
 $('guidedDialog').addEventListener('keydown',event=>{
   if(!guidedReview||event.altKey||event.ctrlKey||event.metaKey||event.isComposing)return;
   if(event.key==='Escape'){event.preventDefault();event.stopPropagation();closeGuidedReview();return;}
-  if(event.target.closest('button,a,input,select,textarea,summary,[contenteditable="true"]'))return;
+  if(event.target.closest('button,a,input,select,textarea,summary,.compare-viewport,[contenteditable="true"]'))return;
   const next=event.key==='ArrowRight'&&!event.shiftKey;
   const previous=event.key==='ArrowLeft'&&!event.shiftKey;
   if(!next&&!previous)return;
@@ -707,8 +793,14 @@ $('expandCheckReason').onclick=()=>{
 $('reasonDetails').addEventListener('toggle',()=>{requestAnimationFrame(updateReasonToggle);scheduleComparisonLines();});
 window.addEventListener('resize',updateReasonToggle);
 $('compareZoom').onclick=()=>{compareZoom=!compareZoom;paintComparison(comparisonModel);};
-$('compareFocus').onclick=()=>{if(!comparisonModel)return;for(const side of ['Left','Right'])focusPaper(side,comparisonModel[side.toLowerCase()],Number($('compare'+side+'Paper').dataset.page));scheduleComparisonLines();$('comparisonBoard').scrollIntoView({behavior:scrollBehavior(),block:'start'});};
-for(const side of ['Left','Right'])$('compare'+side+'Viewport').addEventListener('scroll',scheduleComparisonLines,{passive:true});
+$('compareFocus').onclick=()=>{if(!comparisonModel)return;for(const side of ['Left','Right']){const model=comparisonModel[side.toLowerCase()];setPaperView(side,model.refs.some(ref=>ref.anchor?.boxes?.length)?'detail':'page');}scheduleComparisonLines();$('comparisonBoard').scrollIntoView({behavior:scrollBehavior(),block:'start'});};
+for(const side of ['Left','Right']){
+  $('compare'+side+'Viewport').addEventListener('scroll',scheduleComparisonLines,{passive:true});
+  $('compare'+side+'Fit').onclick=()=>setPaperView(side,$('compare'+side+'Stage').dataset.view==='page'?'detail':'page');
+}
+function resizePaperPages(){for(const side of ['Left','Right'])if($('compare'+side+'Stage').dataset.view==='page')setPaperView(side,'page');}
+window.addEventListener('resize',resizePaperPages,{passive:true});
+if(typeof ResizeObserver!=='undefined')for(const side of ['Left','Right'])new ResizeObserver(resizePaperPages).observe($('compare'+side+'Viewport'));
 window.addEventListener('resize',scheduleComparisonLines,{passive:true});
 if(typeof ResizeObserver!=='undefined')new ResizeObserver(scheduleComparisonLines).observe($('comparisonBoard'));
 
@@ -742,8 +834,18 @@ async function paintTimeEstimate(row, token) {
   } catch { if(token===routeToken&&request===estimateRequest)setTimeEstimate('문서 분량과 대기 상태에 따라 처리 시간이 달라집니다. 완료되면 이 화면에 결과가 표시됩니다.'); }
 }
 
-function friendly(check) {
+function friendly(check){
+  const title=friendlyTitle(check),rows=(check.documents||[]).map(id=>/^\w+:\d+:items\[(\d+)\]$/.exec(id)?.[1]).filter(value=>value!==undefined);
+  return rows.length&&new Set(rows).size===1?'품목 '+(Number(rows[0])+1)+' · '+title:title;
+}
+function friendlyTitle(check) {
+  const missing=missingDocumentKind(check);if(missing)return (documentLabel[missing]||missing)+' 제공 여부 확인';
   const id = String(check.check_id || '').toUpperCase();
+  if(/ITEM_MAPPING/.test(id))return '품목 연결 확인';
+  if(/CUMULATIVE/.test(id))return '누적 선적 수량 확인';
+  if(/QUANTITY_UNIT/.test(id))return '수량 단위 비교';
+  if(/WEIGHT_UNIT/.test(id))return '중량 단위 비교';
+  if(/PACKAGE_UNIT/.test(id))return '포장 단위 비교';
   if (/INVOICE_TOTAL|CI_TOTAL/.test(id)) return '송장 합계 확인';
   if (/INTERNAL.*WEIGHT|WEIGHT.*INTERNAL/.test(id)) return '총중량·순중량 확인';
   if (/GROSS|WEIGHT/.test(id)) return '화물 중량 비교';
@@ -770,7 +872,19 @@ function rawValue(value, unit) {
   const text = value === '' ? '"" (공란)' : value === null ? 'null (값 없음)' : typeof value === 'string' ? value : JSON.stringify(value);
   return String(text ?? '값 없음') + (unit ? ' ' + unit : '');
 }
-function documentFor(id) { const matches=(currentSource?.documents||[]).filter(document=>document.document_id===id); return matches.length===1 ? matches[0] : undefined; }
+function documentFor(id) {
+  const documents=currentSource?.documents||[],exact=documents.filter(document=>document.document_id===id);
+  if(exact.length===1)return exact[0];
+  const source=/^([A-Z]+:\d+)(?::items\[\d+\])?$/.exec(String(id)),decorated=/^(.*?) \[([A-Z]+:\d+)\]$/.exec(String(id));
+  const key=source?.[1]||decorated?.[2];if(!key)return undefined;
+  const matches=documents.filter(document=>document.source_key===key&&(!decorated||document.document_id===decorated[1]));
+  return matches.length===1?matches[0]:undefined;
+}
+function documentCaption(id){
+  const doc=documentFor(id);if(!doc)return String(id);
+  const item=/:items\[(\d+)\]$/.exec(id);
+  return (documentLabel[doc.kind]||doc.kind)+' '+doc.document_id+(item?' · 품목 '+(Number(item[1])+1):'');
+}
 function makeFinding(check, index) {
   const item = element('details', undefined, 'finding'), title = element('summary');
   title.append(element('span', statusLabel(check.result), 'status-pill ' + statusTone(check.result)), element('strong', friendly(check)));
@@ -825,7 +939,7 @@ function makeResultItem(check,index) {
   card.append(heading);
   const model=primaryComparison(check,comparisonModels(check,refsFor(check)));
   if(model)card.append(element('p',comparisonGuide(model).replace('아래 표시된 부분을 함께 확인해 보세요.','원문에서 두 값을 대조해 보세요.').replace('아래에 모았어요.','원문 비교에 모았어요.'),'result-item-summary'));
-  const documents=(check.documents||[]).map(id=>{const doc=documentFor(id);return (documentLabel[doc?.kind]||'문서')+' '+id;}).join(' · ');
+  const documents=(check.documents||[]).map(documentCaption).join(' · ');
   card.append(element('p',documents,'result-item-documents'));
   const open=element('button','원문 비교 →','button secondary');open.type='button';open.onclick=()=>{
     reviewFilter=check.result==='PASS'?'PASS':'attention';openGuidedReview(check,open);
@@ -1170,6 +1284,28 @@ function renderWorkflowDiagram(model) {
   }
   $('workflowMap').replaceChildren(svg);$('workflowMap').hidden=false;
 }
+function loadPublishedWorkflow(){
+  const data=$('publishedWorkflow');if(!data)return;
+  try{
+    const published=JSON.parse(data.textContent),model=parseWorkflowDiagram(published);
+    renderWorkflowDiagram(model);
+    $('workflowMapStatus').textContent='Config '+published.config_version+' · 노드 '+model.nodes.length+'개 · 연결 '+model.edges.length+'개 · Studio Export 기준';
+  }catch{$('workflowMapStatus').textContent='워크플로우 구조도를 불러오지 못했어요. Export 파일로 확인해 주세요.';}
+}
+loadPublishedWorkflow();
+const workflowReturnPoint=$('workflowMap').parentElement;
+function closeWorkflow(restoreFocus=true){
+  if($('workflowDialog').open)$('workflowDialog').close();
+  if($('workflowMap').parentElement!==workflowReturnPoint)$('workflowMapStatus').after($('workflowMap'));
+  document.body.classList.remove('workflow-open');if(restoreFocus)$('workflowExpand').focus({preventScroll:true});
+}
+$('workflowExpand').onclick=()=>{
+  $('workflowDialogHost').append($('workflowMap'));document.body.classList.add('workflow-open');
+  $('workflowDialog').showModal();$('workflowMap').focus({preventScroll:true});
+};
+$('workflowClose').onclick=closeWorkflow;
+$('workflowDialog').addEventListener('cancel',event=>{event.preventDefault();closeWorkflow();});
+$('workflowDialog').addEventListener('close',()=>{if(document.body.classList.contains('workflow-open'))closeWorkflow();});
 $('workflowJson').addEventListener('change',async()=>{
   const file=$('workflowJson').files[0];if(!file)return;
   $('workflowMap').replaceChildren();$('workflowMap').hidden=true;
