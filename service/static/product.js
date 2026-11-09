@@ -1263,24 +1263,45 @@ function parseWorkflowDiagram(input) {
     }
   }
   if(visited!==nodes.size)throw Error('순환 연결이 있어 구조도를 배치하지 못했어요. 원본 워크플로우 연결을 확인해 주세요.');
-  const rows=new Map();for(const node of nodes.values()){
-    const column=levels.get(node.id),row=rows.get(column)||0;rows.set(column,row+1);node.x=24+column*250;node.y=24+row*122;
+  const columns=new Map();for(const node of nodes.values()){
+    const column=levels.get(node.id);if(!columns.has(column))columns.set(column,[]);columns.get(column).push(node);
   }
-  return {name:String(config.workflow_name||'선택한 워크플로우'),nodes:[...nodes.values()],edges,width:Math.max(...[...nodes.values()].map(node=>node.x))+214,height:Math.max(...[...nodes.values()].map(node=>node.y))+110};
+  const maxRows=Math.max(...[...columns.values()].map(column=>column.length));
+  for(const [column,items]of columns)items.forEach((node,row)=>{
+    node.column=column;node.x=18+column*180;node.y=56+(maxRows-items.length)*34+row*68;
+  });
+  return {name:String(config.workflow_name||'선택한 워크플로우'),nodes:[...nodes.values()],edges,nodeWidth:148,nodeHeight:54,width:Math.max(...[...nodes.values()].map(node=>node.x))+166,height:Math.max(...[...nodes.values()].map(node=>node.y))+72};
+}
+function workflowNodeTitle(node){
+  const names={문서_연결_확인:'문서 연결 확인',PO_CI_상업검증:'발주·송장 비교',CI_PL_BL_물류검증:'선적 정보 비교',최종판정:'최종 판정',검증완료_요약:'일치 요약',불일치_조치초안:'불일치 조치',담당자_검토요청:'검토 요청',OTHER_extract_schema:'기타 문서 처리'};
+  if(names[node.label])return names[node.label];
+  if(node.type==='parse')return '문서 읽기';if(node.type==='classify')return '문서 분류';if(node.type==='merge')return '추출 결과 모으기';
+  if(node.type==='extract')return ({PO:'발주서',CI:'상업송장',PL:'포장명세서',BL:'선하증권'}[node.label.split('_')[0]]||node.label.split('_')[0])+' 추출';
+  return node.label.replace(/_/g,' ');
 }
 function renderWorkflowDiagram(model) {
   const svg=svgElement('svg',{viewBox:'0 0 '+model.width+' '+model.height,width:model.width,height:model.height,role:'img','aria-label':model.name+' · 노드 '+model.nodes.length+'개, 연결 '+model.edges.length+'개'});
   const defs=svgElement('defs'),marker=svgElement('marker',{id:'workflowArrow',viewBox:'0 0 10 10',refX:9,refY:5,markerWidth:6,markerHeight:6,orient:'auto'});marker.append(svgElement('path',{d:'M 0 0 L 10 5 L 0 10 z',class:'workflow-arrow'}));defs.append(marker);svg.append(defs);
   const nodes=new Map(model.nodes.map(node=>[node.id,node]));
+  const linking=model.nodes.find(node=>node.label==='문서_연결_확인'),decision=model.nodes.find(node=>node.label==='최종판정');
+  if(linking&&decision){
+    const groups=[{start:0,end:linking.column-1,label:'01  문서 읽기·추출'},{start:linking.column,end:decision.column-1,label:'02  문서 연결·비교'},{start:decision.column,end:Math.max(...model.nodes.map(n=>n.column)),label:'03  판정·안내'}];
+    for(const group of groups){
+      const x=10+group.start*180,width=(group.end-group.start)*180+164;
+      svg.append(svgElement('rect',{x,y:35,width,height:model.height-43,rx:8,class:'workflow-stage'}));
+      const label=svgElement('text',{x:x+8,y:22,class:'workflow-stage-label'});label.textContent=group.label;svg.append(label);
+    }
+  }
   for(const edge of model.edges){
-    const from=nodes.get(edge.source),to=nodes.get(edge.target),x=from.x+190,y=from.y+42,tx=to.x,ty=to.y+42,middle=(x+tx)/2;
+    const from=nodes.get(edge.source),to=nodes.get(edge.target),x=from.x+model.nodeWidth,y=from.y+model.nodeHeight/2,tx=to.x,ty=to.y+model.nodeHeight/2,middle=(x+tx)/2;
     svg.append(svgElement('path',{d:`M ${x} ${y} C ${middle} ${y}, ${middle} ${ty}, ${tx-3} ${ty}`,class:'workflow-edge','marker-end':'url(#workflowArrow)'}));
-    if(edge.label){const label=svgElement('text',{x:middle,y:(y+ty)/2-7,class:'workflow-edge-label','text-anchor':'middle'});label.textContent=edge.label;svg.append(label);}
+    if(edge.label){const label=svgElement('text',{x:tx-5,y:ty-7,class:'workflow-edge-label','text-anchor':'end'});label.textContent=({PASS:'일치',FAIL:'불일치',REQUIRES_HUMAN_REVIEW:'확인 필요',others:'기타'})[edge.label]||edge.label;svg.append(label);}
   }
   for(const node of model.nodes){
-    const group=svgElement('g',{transform:`translate(${node.x} ${node.y})`}),title=svgElement('title');title.textContent=node.label;group.append(title,svgElement('rect',{width:190,height:84,rx:10,class:'workflow-node'}));
-    const type=svgElement('text',{x:12,y:21,class:'workflow-type'});type.textContent=node.type.toUpperCase();group.append(type);
-    const chars=Array.from(node.label);for(let i=0;i<2;i++){const label=svgElement('text',{x:12,y:43+i*18,class:'workflow-node-label'});label.textContent=chars.slice(i*17,(i+1)*17).join('')+(i===1&&chars.length>34?'…':'');group.append(label);}svg.append(group);
+    const tone=({검증완료_요약:'pass',불일치_조치초안:'fail',담당자_검토요청:'review'})[node.label]||'normal';
+    const group=svgElement('g',{transform:`translate(${node.x} ${node.y})`,'data-tone':tone}),title=svgElement('title');title.textContent=node.label+' · '+node.type;group.append(title,svgElement('rect',{width:model.nodeWidth,height:model.nodeHeight,rx:6,class:'workflow-node'}));
+    const label=svgElement('text',{x:11,y:23,class:'workflow-node-label'}),name=Array.from(workflowNodeTitle(node));label.textContent=name.slice(0,12).join('')+(name.length>12?'…':'');group.append(label);
+    const type=svgElement('text',{x:11,y:41,class:'workflow-type'});type.textContent=node.type==='extract'?node.label.split('_')[0]+' · Extract':({parse:'Parse',classify:'Classify / Split',merge:'Merge'})[node.type]||'Instruct';group.append(type);svg.append(group);
   }
   $('workflowMap').replaceChildren(svg);$('workflowMap').hidden=false;
 }
