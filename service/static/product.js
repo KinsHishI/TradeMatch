@@ -74,7 +74,7 @@ function showPage(id) {
   if(guidedReview)closeGuidedReview(false);
   closeReport(false);
   if($('workflowDialog').open)closeWorkflow(false);
-  if(id!=='progressView'&&id!=='gameView')stackGame.pause();
+  if(id!=='progressView'&&id!=='gameView')hoopGame.pause();
   for (const page of document.querySelectorAll('.page')) page.hidden = page.id !== id;
 }
 function paintJourney(host,stage,state,caption='') {
@@ -118,10 +118,10 @@ function startClock(row) {
 }
 async function renderRoute() {
   const token = ++routeToken;
-  stopClock(); stackGame.pause(); notice();
+  stopClock(); hoopGame.pause(); notice();
   const params = new URLSearchParams(location.search), id = params.get('run'), view = params.get('view');
   const isHistory = !id && view === 'history', isAbout = !id && !['new','history','game'].includes(view), isNew = !id && ['new','game'].includes(view);
-  document.title=(id?'검증 조회':isHistory?'검증 기록':isAbout?'서비스 소개':view==='game'?'컨테이너 쌓기':'새 검증')+' · TradeMatch';
+  document.title=(id?'검증 조회':isHistory?'검증 기록':isAbout?'서비스 소개':view==='game'?'PDF 자유투':'새 검증')+' · TradeMatch';
   $('navAbout').classList.toggle('active', isAbout);
   $('navAbout').setAttribute('aria-current', isAbout ? 'page' : 'false');
   $('navNew').classList.toggle('active', isNew);
@@ -142,7 +142,7 @@ async function renderRoute() {
   } else if (isAbout) {
     showPage('aboutView'); $('aboutHeading').focus({preventScroll:true});
   } else if (params.get('view')==='game') {
-    showPage('gameView');mountStackGame('practice','standaloneGameHost');
+    showPage('gameView');mountHoopGame('practice','standaloneGameHost');
   } else if (isHistory) {
     showPage('historyView'); $('historyHeading').focus({preventScroll:true});
     try { await refreshHistory(token); } catch (error) { if (token === routeToken) notice(error.message); }
@@ -227,7 +227,7 @@ function paintProgress(row) {
   $('progressCard').classList.remove('is-complete');$('progressSpinner').hidden=false;
   $('progressEyebrow').textContent='검증 진행';$('resultReady').hidden=true;$('timeEstimate').hidden=false;
   $('waitingBackgroundMessage').textContent='다른 화면으로 이동해도 검증은 계속돼요.';
-  mountStackGame(row.id,'waitingGameHost');
+  mountHoopGame(row.id,'waitingGameHost');
   $('progressHeading').textContent = row.phase === 'queued' ? '문서가 접수됐어요. 검증 순서를 기다리고 있어요.' : '문서를 읽고 비교하고 있어요.';
   $('progressFilename').textContent = row.filename;
   setProgressMessage(({uploading:'고른 PDF를 보내고 있어요.', creating_job:'문서 확인을 요청하고 있어요.', queued:'Studio에서 문서를 확인할 준비를 하고 있어요.', in_progress:'Studio에서 문서를 분석하고 서로 다른 부분이 있는지 살펴보고 있어요.', retrieving:'이전에 요청한 문서가 어디까지 처리됐는지 확인하고 있어요.'})[row.phase] || '처리 상태를 확인하고 있어요.');
@@ -357,10 +357,12 @@ function fieldLocation(meta) {
   return region ? {page:meta.page, boxes:[region], precision:'region'} : {page:meta.page, boxes:[], precision:'page'};
 }
 function attachLocations(source, raw) {
-  const native = [], linked = [];
+  const native = [], linked = [], documentLinks=[],itemLinks=[];
   for (const step of Array.isArray(raw?.output) ? raw.output : []) {
     if(String(step.model||'').endsWith('문서_연결_확인'))for(const block of step.content||[]){
       const data=referenceData(block.text);if(Array.isArray(data?.documents))linked.push(...data.documents);
+      if(Array.isArray(data?.relationships))documentLinks.push(...data.relationships);
+      if(Array.isArray(data?.item_links))itemLinks.push(...data.item_links);
     }
     if (step.step_type !== 'information-extract' && !String(step.model || '').startsWith('Information Extract - ')) continue;
     for (const block of step.content || []) {
@@ -370,7 +372,7 @@ function attachLocations(source, raw) {
       if (key) native.push({key, data, meta});
     }
   }
-  return {...source, documents:source.documents.map(document => {
+  return {...source,documentLinks,itemLinks, documents:source.documents.map(document => {
     const key = {PO:'po_number',CI:'invoice_number',PL:'packing_list_number',BL:'bl_number'}[document.kind];
     const matches = native.filter(item => item.key === key && item.data[key] === document.document_id && sameSourceData(item.data,document.data)&&
       (!document.page||!item.meta.page_ranges?.length||item.meta.page_ranges.some(range=>range[0]<=document.page&&range[1]>=document.page)));
@@ -432,7 +434,7 @@ function passSourceRefs(check){
     else if(/PACKAGE_UNIT/.test(id))fields=['package_unit'];
     else if(/GROSS_WEIGHT/.test(id))fields=['gross_weight'];
     else if(/WEIGHT_UNIT/.test(id))fields=['weight_unit'];
-    else if(/DOCUMENT_LINK/.test(id))fields=[{PO:'po_number',CI:'invoice_number',PL:'packing_list_number',BL:'bl_number'}[doc.kind]];
+    else if(/DOCUMENT_LINK/.test(id))fields=id.startsWith('PO_CI')?[doc.kind==='PO'?'po_number':'po_numbers']:id.startsWith('CI_PL')?[doc.kind==='CI'?'invoice_number':'invoice_numbers']:['shipment_reference'];
     for(const field of fields.filter(Boolean)){
       const value=pathValue(doc.data,field);if(value===undefined)continue;
       const leaf=field.split('.').pop(),unit=leaf==='quantity'?pathValue(doc.data,field.replace(/quantity$/,'quantity_unit')):leaf==='unit_price'||leaf==='invoice_total'?doc.data.currency:leaf==='gross_weight'?doc.data.weight_unit:leaf==='total_packages'?doc.data.package_unit:null;
@@ -454,7 +456,7 @@ function reportedCalculation(check, primary) {
 }
 let comparisonModel = null, comparisonPairs = [], compareZoom = false, pairSession = 0, connectorFrame = 0;
 function semanticField(path) {
-  const leaf=String(path).split('.').pop().replace(/_raw$/,'');
+  const leaf=String(path).split('.').pop().replace(/\[\d+\]$/,'').replace(/_raw$/,'');
   return ({po_number:'po_reference',po_numbers:'po_reference',invoice_number:'invoice_reference',invoice_numbers:'invoice_reference'})[leaf]||leaf;
 }
 function comparisonValuesDiffer(left,right) {
@@ -478,6 +480,38 @@ function preferredPairRefs(check, refs) {
   return [...groups.values()];
 }
 function pairCaption(ref){return fieldLabel(ref.value.field.replace(/_raw$/,''));}
+function sourceRef(doc,field){
+  const value=pathValue(doc.data,field);if(value===undefined)return null;
+  const original={document:doc.document_id,field,value,unit:null};
+  return {key:doc.source_key+':'+field,document:doc,value:original,anchor:exactAnchor(doc,original),sourceContext:true};
+}
+function confirmedReferencePairs(check){
+  if(check.result!=='PASS'||!/DOCUMENT_LINK/.test(check.check_id))return [];
+  const pair=/^(PO_CI|CI_PL|PL_BL)/.exec(check.check_id)?.[1],included=new Set((check.documents||[]).map(documentFor).filter(Boolean)),output=[];
+  for(const relationship of currentSource?.documentLinks||[]){
+    if(relationship.pair!==pair||relationship.link_status!=='CONFIRMED')continue;
+    for(const from of relationship.from_sources||[])for(const to of relationship.to_sources||[]){
+      const a=documentFor(from),b=documentFor(to);if(!a||!b||!included.has(a)||!included.has(b))continue;
+      let left,right;
+      if(pair==='PO_CI'||pair==='CI_PL'){
+        const own=pair==='PO_CI'?'po_number':'invoice_number',list=pair==='PO_CI'?'po_numbers':'invoice_numbers',id=a.data[own],values=b.data[list];
+        if(typeof id!=='string'||!id||!Array.isArray(values))continue;
+        const indices=values.map((value,i)=>value===id?i:-1).filter(i=>i>=0);if(indices.length!==1)continue;
+        left=sourceRef(a,own);right=sourceRef(b,list+'['+indices[0]+']');
+      }else if(a.data.shipment_reference&&a.data.shipment_reference===b.data.shipment_reference){left=sourceRef(a,'shipment_reference');right=sourceRef(b,'shipment_reference');}
+      if(left&&right)output.push({key:'reference:'+left.key+'|'+right.key,relation:'documents',label:pairCaption(left),left:{document:a,refs:[left],role:pairCaption(left)},right:{document:b,refs:[right],role:pairCaption(right)},links:[[0,0]]});
+    }
+  }
+  return output;
+}
+function correspondenceAllowed(left,right){
+  if(!left||!right)return false;
+  if(!left.sourceContext&&!right.sourceContext)return true;
+  if(!left.document?.source_key||!right.document?.source_key||comparisonValuesDiffer(left.value,right.value))return false;
+  const a=left.document.source_key,b=right.document.source_key,ai=/^items\[(\d+)\]/.exec(left.value.field),bi=/^items\[(\d+)\]/.exec(right.value.field);
+  if(ai||bi)return Boolean(ai&&bi&&(currentSource.itemLinks||[]).some(link=>link.link_status==='CONFIRMED'&&link.from_source===a&&link.to_source===b&&link.from_item_index===Number(ai[1])&&link.to_item_index===Number(bi[1])));
+  return (currentSource.documentLinks||[]).some(link=>link.link_status==='CONFIRMED'&&link.from_sources?.includes(a)&&link.to_sources?.includes(b));
+}
 function missingDocumentKind(check){
   if(check.result!=='REQUIRES_HUMAN_REVIEW')return null;
   const id=String(check.check_id||'').toUpperCase();
@@ -486,6 +520,7 @@ function missingDocumentKind(check){
     (/DOC_|DOCUMENT|EXIST|MISSING/.test(id)||new RegExp('(^|_)'+kind+'(_|$)').test(id)))||null;
 }
 function comparisonModels(check, refs) {
+  const references=confirmedReferencePairs(check);if(references.length)return references;
   const candidates=preferredPairRefs(check,refs), total=candidates.find(ref=>ref.value.field==='invoice_total');
   const absent=missingDocumentKind(check);
   if(absent){
@@ -618,7 +653,7 @@ function comparisonGuide(model) {
   if(missing)return '이번 PDF에서 '+name({kind:missing})+'을 찾지 못했어요. 필요한 서류가 모두 들어 있는지 확인해 주세요.';
   const refs=[...model.left.refs,...model.right.refs];
   if(model.relation==='cumulative')return '이 검사는 송장 '+model.sourceCount+'건의 누적 수량을 확인한 결과예요. '+(model.sourceCount>1?'탭을 넘기며 각 송장을 살펴보세요. ':'')+'한 송장의 수량과 발주 수량의 차이만으로 판정하지 않아요.';
-  if(refs.some(ref=>ref.sourceContext))return '일치로 판정된 항목이에요. 세부 비교 근거가 제공되지 않아, 연결된 문서의 참고 원문을 보여드려요.';
+  if(refs.some(ref=>ref.sourceContext))return correspondenceAllowed(model.left.refs[0],model.right.refs[0])?'같은 값을 가리키는 두 원문 위치를 선으로 연결했어요. Studio가 확인한 문서·품목 연결을 기준으로 보여드려요.':'일치로 판정된 항목이에요. 연결된 문서의 참고 원문을 보여드려요.';
   const blank=refs.find(ref=>ref.value.value===''||ref.value.value===null);
   if(blank)return name(blank.document)+'에서 '+fieldLabel(blank.value.field)+' 값을 확인하지 못했어요. 문서 원본을 살펴봐 주세요.';
   if(model.relation==='calculation')return '비교한 송장 합계는 '+comparisonValue(model.right.refs[0])+'예요. '+(model.calculation?'계산한 합계는 '+model.calculation.value+' '+model.calculation.unit+'예요. ':'')+'아래 품목 내역과 총액을 함께 확인해 보세요.';
@@ -651,7 +686,7 @@ function makePaper(side,model,session){
     }
   });
   $(prefix+'Note').textContent=!doc?(model.missingKind?'해당 문서가 제공되지 않아 비교할 원문이 없습니다.':'이 검사에서 대응 원문을 확정할 수 없습니다.'):!precise?'표시할 위치를 찾지 못했어요. 페이지 전체에서 확인하거나 원문을 확대해 주세요.':comparisonModel.relation==='calculation'&&side==='Left'?'네모 안의 수량과 단가로 합계를 확인했어요. 표시된 값이 모두 틀렸다는 뜻은 아니에요.':'네모 안이 이번에 확인한 부분이에요. 스크롤로 주변 내용도 살펴볼 수 있어요.';
-  if(precise&&refs.some(ref=>ref.sourceContext))$(prefix+'Note').textContent='연결된 문서의 참고 위치예요. 이 항목의 세부 비교 근거는 제공되지 않았어요.';
+  if(precise&&refs.some(ref=>ref.sourceContext))$(prefix+'Note').textContent=correspondenceAllowed(comparisonModel.left.refs[0],comparisonModel.right.refs[0])?'연결된 문서에서 같은 값이 적힌 위치예요.':'연결된 문서의 참고 위치예요. 이 항목의 세부 비교 근거는 제공되지 않았어요.';
   $(prefix+'Fit').hidden=!doc||!currentSource.preview_url;
   $(prefix+'Viewport').setAttribute('tabindex','0');$(prefix+'Viewport').setAttribute('role','region');
   $(prefix+'Viewport').setAttribute('aria-label',(doc?documentLabel[doc.kind]||doc.kind:'문서')+' 원문 · 스크롤로 이동');
@@ -726,11 +761,12 @@ function visibleEndpoint(side,index){
 }
 function drawComparisonLines(){
   const overlay=$('comparisonLines');overlay.replaceChildren();
-  if(!comparisonModel||$('resultView').hidden||[...comparisonModel.left.refs,...comparisonModel.right.refs].some(ref=>ref.sourceContext))return;
+  if(!comparisonModel||$('resultView').hidden)return;
   const board=$('comparisonBoard').getBoundingClientRect();if(!board.width||!board.height)return;
   overlay.setAttribute('viewBox','0 0 '+board.width+' '+board.height);
   overlay.setAttribute('class','comparison-lines '+(comparisonModel.relation==='calculation'?'supporting':statusTone(activeCheck.result)));
   for(const [left,right]of comparisonModel.links){
+    if(!correspondenceAllowed(comparisonModel.left.refs[left],comparisonModel.right.refs[right]))continue;
     const a=visibleEndpoint('Left',left),b=visibleEndpoint('Right',right);if(!a||!b)continue;
     const start={x:a.x-board.left,y:a.y-board.top},end={x:b.x-board.left,y:b.y-board.top};
     const line=svgElement('path',{d:connectorCurve(start,end),fill:'none',class:'comparison-connector','data-left':left,'data-right':right});
@@ -866,7 +902,7 @@ function fieldLabel(path) {
   const fields = {po_numbers:'참조 발주서 번호',invoice_numbers:'참조 송장 번호',po_reference:'참조 발주서 번호',invoice_reference:'참조 송장 번호',po_line_reference:'발주서 행 참조',line_number:'품목 행 번호',po_number:'발주서 번호', invoice_number:'송장 번호', packing_list_number:'포장명세서 번호', bl_number:'B/L 번호', quantity:'수량',quantity_raw:'수량 원문', quantity_unit:'수량 단위', unit_price:'단가',unit_price_currency:'단가 통화', sku:'상품 코드(SKU)', model:'모델', currency:'거래 통화',price_basis:'단가 기준', invoice_total:'송장 총액',invoice_total_raw:'총액 원문',gross_weight:'총중량',gross_weight_raw:'총중량 원문',net_weight:'순중량',weight_unit:'중량 단위',total_packages:'포장 개수',package_unit:'포장 단위',document_status:'문서 상태',revision_selection_evidence_raw:'개정·승인 기재 문구',shipment_reference:'선적 참조',partial_shipment_terms:'부분 선적 조건',quantity_tolerance_terms:'수량 허용 조건',shipping_amount_raw:'운임 원문',insurance_amount_raw:'보험료 원문',other_charges_amount_raw:'기타 비용 원문',discount_amount_raw:'할인 원문',tax_amount_raw:'세금 원문'};
   Object.assign(fields,{buyer_name:'구매자',seller_name:'판매자',buyer_address:'구매자 주소',seller_address:'판매자 주소',consignee:'수하인',notify_party:'통지처',port_of_loading:'선적항',port_of_discharge:'양하항'});
   const text = String(path || ''), match = /^items\[(\d+)\]\.(.+)$/.exec(text);
-  return match ? '품목 ' + (Number(match[1]) + 1) + ' · ' + (fields[match[2]] || match[2]) : fields[text] || text;
+  return match ? '품목 ' + (Number(match[1]) + 1) + ' · ' + (fields[match[2]] || match[2]) : fields[text.replace(/\[\d+\]$/,'')] || text;
 }
 function rawValue(value, unit) {
   const text = value === '' ? '"" (공란)' : value === null ? 'null (값 없음)' : typeof value === 'string' ? value : JSON.stringify(value);
@@ -1131,110 +1167,144 @@ $('connectionForm').onsubmit = async event => {
   } catch (error) { $('connectionError').textContent = error.message; }
   finally { $('saveConnection').disabled = false; }
 };
-// This game only updates local SVG and scores. It has no access to the job lifecycle.
-function containerPlacement(x,width,support) {
-  if(Math.abs(x-support.x)<=5)return {x:support.x,width:Math.min(width,support.width),perfect:true};
-  const left=Math.max(x,support.x),right=Math.min(x+width,support.x+support.width);
-  return right-left>=12?{x:left,width:right-left,perfect:false}:null;
-}
-function createStackGame() {
-  const colors=['#c4855b','#38735c','#547d91','#c5a35b','#748767'];
-  let run=null,blocks=[],moving=null,phase='idle',frame=0,last=null,camera=0,score=0,best=0,direction=1;
-  try { const value=Number(localStorage.getItem('tradematch.stack-best'));if(Number.isInteger(value)&&value>=0&&value<100000)best=value; } catch {}
-  $('stackBest').textContent=best;
-  function crate(width,label,color) {
-    const group=svgElement('g');
-    group.append(svgElement('rect',{width,height:28,rx:3,fill:color,stroke:'#203c3335','stroke-width':1}));
-    for(let x=10;x<width-5;x+=13)group.append(svgElement('path',{d:'M '+x+' 4v20',stroke:'#ffffff30','stroke-width':2}));
-    group.append(svgElement('path',{d:'M 4 3h'+Math.max(0,width-8),stroke:'#ffffff55','stroke-width':2}));
-    if(width>65){const text=svgElement('text',{x:width/2,y:18,'text-anchor':'middle',fill:'#fff9eb','font-size':9,'font-family':'Arial,sans-serif','font-weight':700});text.textContent=label;group.append(text);}
-    return group;
+// Local-only free throw: the preview and the shot share the same physics.
+const PDF_COURT={width:900,height:480,gravity:900,rimX:704,rimY:190,rimHalf:42,radius:11,homeX:210,homeY:370};
+function freeThrowStep(ball,dt){
+  const c=PDF_COURT,oldX=ball.x,oldY=ball.y;
+  ball.x+=ball.vx*dt;ball.y+=ball.vy*dt+c.gravity*dt*dt/2;ball.vy+=c.gravity*dt;ball.age=(ball.age||0)+dt;
+  if(!ball.scored&&oldY<c.rimY&&ball.y>=c.rimY&&ball.vy>0){
+    const x=oldX+(ball.x-oldX)*(c.rimY-oldY)/(ball.y-oldY);
+    if(x>c.rimX-c.rimHalf+c.radius&&x<c.rimX+c.rimHalf-c.radius){ball.scored=true;ball.x=x;ball.vx*=.12;return 'goal';}
   }
-  function paintStack() {
-    camera=Math.max(0,(blocks.length-1)*28-84);
-    $('stackShip').setAttribute('transform','translate(0 '+camera+')');$('stackBlocks').replaceChildren();
-    for(const [index,block]of blocks.entries()){
-      const y=260-index*28+camera;if(y>335||y<35)continue;
-      const group=crate(block.width,index?'TM · '+String(index).padStart(2,'0'):'TRADEMATCH',index?colors[(index-1)%colors.length]:'#416a54');
-      group.setAttribute('transform','translate('+block.x+' '+y+')');$('stackBlocks').append(group);
+  if(!ball.scored){
+    if(ball.x+c.radius>758&&oldX+c.radius<=758&&ball.y>72&&ball.y<210){ball.x=758-c.radius;ball.vx=-Math.abs(ball.vx)*.64;}
+    for(const rim of [c.rimX-c.rimHalf,c.rimX+c.rimHalf]){
+      const dx=ball.x-rim,dy=ball.y-c.rimY,d=Math.hypot(dx,dy),radius=c.radius+4;
+      if(d>0&&d<radius){const nx=dx/d,ny=dy/d,dot=ball.vx*nx+ball.vy*ny;if(dot<0){ball.vx-=1.65*dot*nx;ball.vy-=1.65*dot*ny;}ball.x=rim+nx*radius;ball.y=c.rimY+ny*radius;}
     }
-    $('stackScore').textContent=score;$('stackBest').textContent=best;
   }
-  function paintMoving() {
-    if(!moving)return;
-    $('stackMoving').setAttribute('transform','translate('+moving.x+' '+moving.y+')');
-    $('stackRope').setAttribute('d','M '+(moving.x+moving.width/2-16)+' 30v32m32-32v32');
+  return ball.y>452||ball.x>950||ball.x< -50||ball.age>3.5?'end':null;
+}
+function freeThrowPreview(ball){
+  const copy={...ball},points=[{x:copy.x,y:copy.y}];
+  for(let i=0;i<78;i++){const event=freeThrowStep(copy,1/45);if(i%3===0)points.push({x:copy.x,y:copy.y});if(event==='goal'||event==='end')break;}
+  return points;
+}
+function createFreeThrowGame(){
+  const c=PDF_COURT,labels=['CI','BL','PO','PL'],colors={CI:'#3159d9',BL:'#356f8a',PO:'#7661ad',PL:'#b87829'};
+  const stage=$('hoopStage'),svg=$('hoopSvg');
+  let run=null,phase='ready',last=null,frame=0,ball=null,drag=null,score=0,streak=0,best=0,attempts=0,label='',resultTime=0,pausedPhase='ready',particles=[];
+  const reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
+  try{const value=Number(localStorage.getItem('tradematch.pdf-hoop-best'));if(Number.isInteger(value)&&value>=0&&value<100000)best=value;}catch{}
+  function paper(){
+    const group=$('hoopMoving');group.replaceChildren();
+    group.append(svgElement('path',{d:'M -26 -33 H 12 L 27 -18 V 33 H -26 Z',fill:'white',stroke:colors[label],'stroke-width':2}));
+    group.append(svgElement('path',{d:'M 12 -33 V -18 H 27',fill:'#e8edf9',stroke:colors[label],'stroke-width':1.5}));
+    group.append(svgElement('rect',{x:-20,y:-8,width:40,height:24,rx:5,fill:colors[label]}));
+    const name=svgElement('text',{x:0,y:9,'text-anchor':'middle',fill:'white','font-size':16,'font-weight':750});name.textContent=label;group.append(name);
+    group.append(svgElement('path',{d:'M -17 23 H 17',stroke:'#d9e1ef','stroke-width':2}));
+    $('hoopDocumentName').textContent=label+'.pdf';group.setAttribute('aria-label',label+' PDF 잡아서 던지기');
   }
-  function newContainer() {
-    const width=blocks[blocks.length-1].width;direction=score%2?-1:1;
-    moving={x:direction>0?30:570-width,y:66,width,velocity:0,target:260-blocks.length*28+camera};
-    $('stackMoving').replaceChildren(crate(width,'TM · '+String(score+1).padStart(2,'0'),colors[score%colors.length]));
-    paintMoving();
+  function paint(){
+    if(!ball)return;
+    const angle=phase==='flight'||phase==='celebrating'?Math.max(-45,Math.min(45,ball.vx*.05))*(ball.scored ? 0.3 : 1):drag?(ball.x-c.homeX)*.08:-7;
+    const scale=ball.scored ? 0.83 : 1;
+    $('hoopMoving').setAttribute('transform',`translate(${ball.x} ${ball.y}) rotate(${angle}) scale(${scale})`);
+    $('hoopShadow').setAttribute('cx',ball.x);$('hoopShadow').setAttribute('rx',Math.max(9,26-(430-ball.y)*.025));
+    $('hoopScore').textContent=score;$('hoopStreak').textContent=streak;$('hoopBest').textContent=best;$('hoopAttempts').textContent=attempts+'회 시도';
   }
-  function controls() {
-    $('stackGame').dataset.phase=phase;
-    $('stackOverlay').hidden=!['idle','paused','over'].includes(phase);
-    $('stackPause').hidden=!['moving','dropping','sinking'].includes(phase);
-    $('stackAction').disabled=phase==='dropping'||phase==='sinking';
-    const label=phase==='idle'?'쌓기 시작':phase==='over'?'다시 쌓기':phase==='paused'?'계속하기':'컨테이너 놓기';
-    $('stackAction').textContent=label;$('stackStage').setAttribute('aria-label',label);
-    if(phase==='paused'){$('stackOverlayTitle').textContent='잠깐 쉬는 중';$('stackOverlayHint').textContent='눌러서 이어 할 수 있어요.';}
+  function controls(){
+    $('hoopGame').dataset.phase=phase;
+    $('hoopOverlay').hidden=phase!=='paused';$('hoopPause').hidden=phase==='paused';
+    $('hoopAction').disabled=['flight','celebrating','missed','aiming'].includes(phase);
+    $('hoopAction').textContent=phase==='paused'?'계속하기':'연습 슛  Space';
+    stage.setAttribute('aria-label',phase==='paused'?'일시 정지된 PDF 자유투':label+' PDF를 잡아 던지세요. 스페이스바로 연습 슛');
+  }
+  function newPaper(){
+    label=labels.filter(name=>name!==label)[Math.floor(Math.random()*(label?3:4))]||'CI';
+    ball={x:c.homeX,y:c.homeY,vx:0,vy:0,age:0,scored:false};drag=null;phase='ready';resultTime=0;
+    $('hoopTrail').setAttribute('d','');$('hoopBurst').setAttribute('opacity',0);$('hoopConfetti').replaceChildren();$('hoopNet').removeAttribute('transform');
+    particles=[];paper();controls();paint();
   }
   function schedule(){cancelAnimationFrame(frame);last=null;frame=requestAnimationFrame(tick);}
-  function tick(time) {
-    if(!['moving','dropping','sinking'].includes(phase))return;
-    if(document.hidden){pause();return;}
-    const dt=last===null?0:Math.min(.05,Math.max(0,(time-last)/1000));last=time;
-    if(phase==='moving'){
-      moving.x+=direction*Math.min(245,125+score*7)*dt;
-      const right=570-moving.width;
-      if(moving.x>=right){moving.x=right;direction=-1;}if(moving.x<=30){moving.x=30;direction=1;}
-    }else{
-      moving.velocity+=1650*dt;moving.y+=moving.velocity*dt;
-      if(phase==='dropping'&&moving.y>=moving.target){
-        const landing=containerPlacement(moving.x,moving.width,blocks[blocks.length-1]);
-        if(!landing){phase='sinking';controls();$('stackMessage').textContent='앗, 배 옆으로 떨어졌어요!';}
-        else{
-          blocks.push({x:landing.x,width:landing.width});score++;
-          if(score>best){best=score;try{localStorage.setItem('tradematch.stack-best',String(best));}catch{}}
-          paintStack();newContainer();phase='moving';controls();
-          $('stackMessage').textContent=landing.perfect?'정확해요! '+score+'개째 실었어요.':score+'개 성공! 조금 좁아졌으니 다음 타이밍을 노려보세요.';
-        }
-      }
-      if(phase==='sinking'&&moving.y>390){
-        phase='over';controls();$('stackOverlayTitle').textContent=score+'개 쌓았어요!';$('stackOverlayHint').textContent='한 번 더 도전해볼까요?';$('stackMessage').textContent='화면을 누르면 새로 시작합니다.';
-      }
+  function celebrate(){
+    score++;streak++;if(streak>best){best=streak;try{localStorage.setItem('tradematch.pdf-hoop-best',String(best));}catch{}}
+    phase='celebrating';resultTime=0;$('hoopBurstTitle').textContent=streak>1?streak+'연속 골인!':label+' 골인!';
+    $('hoopMessage').textContent='골인! '+label+'.pdf가 쏙 들어갔어요. '+(streak>1?streak+'번 연속 성공!':'다음 PDF도 도전해 보세요.');
+    $('hoopBurst').setAttribute('opacity',1);$('hoopTrail').setAttribute('d','');
+    if(!reduced)for(let i=0;i<34;i++){
+      const node=svgElement('rect',{width:5,height:9,rx:1,fill:['#3159d9','#e9b64c','#40a68b','#a091dc'][i%4]});
+      $('hoopConfetti').append(node);particles.push({node,x:c.rimX,y:c.rimY-12,vx:(Math.random()-.5)*370,vy:-130-Math.random()*260,rotation:Math.random()*180});
     }
-    paintMoving();
-    if(['moving','dropping','sinking'].includes(phase))frame=requestAnimationFrame(tick);
+    controls();paint();
   }
-  function reset() {
-    cancelAnimationFrame(frame);phase='idle';score=0;blocks=[{x:220,width:160}];
-    paintStack();newContainer();$('stackOverlayTitle').textContent='항구의 빈자리를 채워볼까요?';$('stackOverlayHint').textContent='화면을 눌러 시작하세요.';
-    $('stackMessage').textContent='클릭 · 터치 · 스페이스바로 놓기';controls();
+  function tick(time){
+    if(!['flight','celebrating','missed'].includes(phase))return;
+    if(document.hidden){pause();return;}
+    const dt=last===null?0:Math.min(.035,Math.max(0,(time-last)/1000));last=time;
+    if(phase==='flight'){
+      const event=freeThrowStep(ball,dt);
+      if(event==='goal')celebrate();else if(event==='end'){phase='missed';resultTime=0;streak=0;$('hoopMessage').textContent='아깝다! 점선을 보며 방향과 힘을 조금 바꿔보세요.';controls();}
+    }else if(phase==='celebrating'){
+      resultTime+=dt;freeThrowStep(ball,dt);
+      $('hoopNet').setAttribute('transform','translate(0 '+(reduced?0:Math.sin(resultTime*27)*Math.max(0,1-resultTime)*5)+')');
+      $('hoopBurst').setAttribute('opacity',Math.min(1,(1.3-resultTime)*3));
+      for(const p of particles){p.x+=p.vx*dt;p.y+=p.vy*dt;p.vy+=600*dt;p.rotation+=170*dt;p.node.setAttribute('transform',`translate(${p.x} ${p.y}) rotate(${p.rotation})`);p.node.setAttribute('opacity',Math.max(0,1-resultTime/1.25));}
+      if(resultTime>1.3)newPaper();
+    }else{resultTime+=dt;if(resultTime>.75)newPaper();}
+    paint();if(['flight','celebrating','missed'].includes(phase))frame=requestAnimationFrame(tick);
   }
-  let pausedPhase='moving';
-  function pause() {
-    if(!['moving','dropping','sinking'].includes(phase))return;
+  function point(event){
+    if(svg.createSVGPoint&&svg.getScreenCTM){const matrix=svg.getScreenCTM();if(matrix){const p=svg.createSVGPoint();p.x=event.clientX;p.y=event.clientY;return p.matrixTransform(matrix.inverse());}}
+    const r=svg.getBoundingClientRect();return {x:(event.clientX-r.left)*900/(r.width||900),y:(event.clientY-r.top)*480/(r.height||480)};
+  }
+  function aimed(event){
+    const p=point(event),dx=p.x-drag.start.x,dy=p.y-drag.start.y;
+    return {x:Math.max(42,Math.min(550,c.homeX+dx)),y:Math.max(80,Math.min(420,c.homeY+dy)),vx:Math.max(-850,Math.min(850,dx*3)),vy:Math.max(-1100,Math.min(700,dy*3)),age:0,scored:false};
+  }
+  function showAim(){
+    const points=freeThrowPreview(ball);$('hoopTrail').setAttribute('d',points.map((p,i)=>(i?'L':'M')+p.x.toFixed(1)+' '+p.y.toFixed(1)).join(' '));
+  }
+  function shoot(){
+    if(Math.hypot(ball.vx,ball.vy)<85){phase='ready';ball={x:c.homeX,y:c.homeY,vx:0,vy:0};$('hoopTrail').setAttribute('d','');$('hoopMessage').textContent='PDF를 골대 쪽으로 조금 더 끌었다가 놓아보세요.';controls();paint();return;}
+    phase='flight';attempts++;$('hoopTrail').setAttribute('d','');$('hoopMessage').textContent=label+'.pdf가 날아갑니다!';controls();schedule();
+  }
+  stage.addEventListener('pointerdown',event=>{
+    if(phase!=='ready'||event.button>0||event.isPrimary===false||document.hidden)return;
+    const p=point(event);if(Math.hypot(p.x-ball.x,p.y-ball.y)>65)return;
+    event.preventDefault();drag={pointer:event.pointerId,start:p};phase='aiming';stage.setPointerCapture?.(event.pointerId);controls();
+  });
+  stage.addEventListener('pointermove',event=>{
+    if(phase!=='aiming'||event.pointerId!==drag?.pointer)return;
+    event.preventDefault();ball=aimed(event);showAim();paint();
+  });
+  stage.addEventListener('pointerup',event=>{
+    if(phase!=='aiming'||event.pointerId!==drag?.pointer)return;
+    event.preventDefault();ball=aimed(event);drag=null;stage.releasePointerCapture?.(event.pointerId);shoot();
+  });
+  function cancelAim(event){if(phase==='aiming'&&drag&&event.pointerId===drag.pointer){drag=null;newPaper();}}
+  stage.addEventListener('pointercancel',cancelAim);stage.addEventListener('lostpointercapture',cancelAim);
+  function practice(){
+    if(document.hidden)return;
+    if(phase==='paused'){phase=pausedPhase;controls();if(['flight','celebrating','missed'].includes(phase))schedule();return;}
+    if(phase!=='ready')return;
+    const t=1.15;ball={x:c.homeX,y:c.homeY,vx:(c.rimX-c.homeX)/t,vy:(c.rimY-c.homeY-c.gravity*t*t/2)/t,age:0,scored:false};shoot();stage.focus({preventScroll:true});
+  }
+  function pause(){
+    if(phase==='paused')return;
+    if(phase==='aiming'){drag=null;newPaper();}
     pausedPhase=phase;phase='paused';cancelAnimationFrame(frame);last=null;controls();
   }
-  function action() {
-    if(document.hidden)return;
-    if(phase==='idle'||phase==='over'){
-      reset();phase='moving';controls();$('stackMessage').textContent='가운데 컨테이너 위를 노려보세요.';schedule();$('stackStage').focus({preventScroll:true});
-    }else if(phase==='paused'){phase=pausedPhase;controls();schedule();}
-    else if(phase==='moving'){phase='dropping';moving.velocity=100;controls();}
-  }
-  $('stackStage').onclick=action;$('stackAction').onclick=action;$('stackPause').onclick=pause;
+  stage.addEventListener('keydown',event=>{if((event.key===' '||event.key==='Enter')&&!event.repeat){event.preventDefault();practice();}});
+  $('hoopAction').onclick=practice;$('hoopPause').onclick=pause;
+  $('hoopReset').onclick=()=>{cancelAnimationFrame(frame);score=0;streak=0;attempts=0;newPaper();$('hoopMessage').textContent='새 판이에요. PDF를 잡아 던져보세요.';};
   document.addEventListener('visibilitychange',()=>{if(document.hidden)pause();});
-  reset();
-  return {attach(id){if(run!==id){run=id;reset();}},pause};
+  newPaper();
+  return {attach(id){if(run!==id){run=id;cancelAnimationFrame(frame);score=0;streak=0;attempts=0;newPaper();}},pause};
 }
-const stackGame=createStackGame();
-function mountStackGame(id,host) {
-  if($('stackGame').parentElement!==$(host))$(host).append($('stackGame'));
-  $('stackGame').hidden=false;stackGame.attach(id);
-}
+const hoopGame=createFreeThrowGame();
+function mountHoopGame(id,host){if($('hoopGame').parentElement!==$(host))$(host).append($('hoopGame'));$('hoopGame').hidden=false;hoopGame.attach(id);}
+
 // Display only topology and node names from Studio exports; never prompts or credentials.
 function parseWorkflowDiagram(input) {
   const config=input?.workflowConfig||input;
