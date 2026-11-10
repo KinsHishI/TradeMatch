@@ -189,7 +189,7 @@ def create_app(application, *, close_on_shutdown=False, deployment_access=None):
         headers = {'Content-Security-Policy': "default-src 'none'; style-src '" + style_hash() + "'; frame-ancestors 'none'; base-uri 'none'"}
         if view != '1':
             headers['Content-Disposition'] = 'attachment; filename="TradeMatch_report.html"'
-        return Response(report_html(row), media_type='text/html', headers=headers)
+        return Response(report_html(row, include_technical=deployment_access is None), media_type='text/html', headers=headers)
 
     @app.post('/api/upload')
     async def upload(request: Request, filename: str = 'document.pdf'):

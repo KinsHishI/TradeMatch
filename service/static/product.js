@@ -155,13 +155,16 @@ $('aboutShowWorkflow').addEventListener('click', () => {
   $('aboutWorkflowHeading').scrollIntoView({behavior:scrollBehavior(),block:'start'});
 });
 function updateConnection() {
-  const ready = Boolean(connection.can_execute);
+  const ready = Boolean(connection.can_execute),locked=Boolean(connection.settings_locked);
+  for(const control of document.querySelectorAll('[data-local-only]'))control.hidden=locked;
+  if(locked&&$('connectionDialog').open)$('connectionDialog').close();
   $('connectionDot').classList.toggle('connected', ready);
   for(const link of document.querySelectorAll('a[href="/workspace"]'))link.hidden=Boolean(connection.settings_locked);
   const connectionLabel=connection.settings_locked?'검증 환경':'연결 설정';$('connectionLabel').textContent=connectionLabel;
   $('connectOpen').setAttribute('aria-label', connectionLabel+(ready?', 검증 환경 준비됨':', 준비 필요'));
   $('setupNeeded').hidden = ready || !connection.settings;
-  $('setupMessage').textContent = connection.key_available ? '사용할 Studio 워크플로우를 연결해 주세요.' : '연결 설정에서 API 키 준비 방법과 사용할 워크플로우를 확인해 주세요.';
+  $('setupHeading').textContent=locked?'지금은 검증을 시작할 수 없어요.':'처음 한 번, 연결 설정이 필요해요.';
+  $('setupMessage').textContent = locked?'서비스 연결을 확인하고 있어요. 잠시 후 다시 시도해 주세요.':connection.key_available ? '사용할 Studio 워크플로우를 연결해 주세요.' : '연결 설정에서 API 키 준비 방법과 사용할 워크플로우를 확인해 주세요.';
   updateFile();
 }
 async function refreshConnection() {
@@ -176,9 +179,9 @@ function updateFile() {
     $('selectedName').textContent = pickedFile.name;
     $('selectedSize').textContent = pickedFile.size < 1024 * 1024 ? (pickedFile.size / 1024).toFixed(0) + ' KB' : (pickedFile.size / 1024 / 1024).toFixed(2) + ' MB';
   }
-  $('liveStart').disabled = !pickedFile || submitting || !connection.settings;
-  $('liveStart').textContent = submitting ? '문서 접수 중…' : connection.can_execute ? '검증 시작 →' : '연결 설정 후 검증 →';
-  $('uploadHint').textContent = submitting ? '문서가 잘 접수됐는지 확인하고 있어요.' : !pickedFile ? '파일을 고른 뒤 검증 시작을 눌러주세요.' : !connection.can_execute ? '파일이 준비됐어요. 연결 설정을 마치면 검증할 수 있어요.' : '검증 시작을 누르면 Studio로 보내 문서를 비교해요.';
+  $('liveStart').disabled = !pickedFile || submitting || !connection.settings || (connection.settings_locked&&!connection.can_execute);
+  $('liveStart').textContent = submitting ? '문서 접수 중…' : connection.can_execute ? '검증 시작 →' : connection.settings_locked?'검증 준비 중':'연결 설정 후 검증 →';
+  $('uploadHint').textContent = submitting ? '문서가 잘 접수됐는지 확인하고 있어요.' : !pickedFile ? '파일을 고른 뒤 검증 시작을 눌러주세요.' : !connection.can_execute ? (connection.settings_locked?'파일이 준비됐어요. 서비스 연결이 복구되면 검증할 수 있어요.':'파일이 준비됐어요. 연결 설정을 마치면 검증할 수 있어요.') : '검증 시작을 누르면 Studio로 보내 문서를 비교해요.';
   $('removeFile').disabled = submitting; $('changeFile').disabled=submitting; $('uploadEstimate').hidden=!connection.can_execute;
 }
 function chooseFile(file) {
@@ -202,7 +205,7 @@ for (const name of ['dragleave', 'drop']) $('dropzone').addEventListener(name, e
 });
 $('liveStart').onclick = async () => {
   if (!pickedFile || submitting) return;
-  if (!connection.can_execute) { openConnection(); return; }
+  if (!connection.can_execute) { if(connection.settings_locked)notice('서비스 연결을 확인하고 있어요. 잠시 후 다시 시도해 주세요.');else openConnection(); return; }
   const submittedRoute = routeToken;
   submitting = true; updateFile(); notice();
   try {
@@ -997,7 +1000,7 @@ function renderResult(row, source) {
   const result = row.analysis.result, attention = result.checks.filter(check => check.result !== 'PASS');
   $('resultHeading').textContent = row.filename;
   const count = Object.values(result.document_counts).filter(Number.isInteger).reduce((sum, value) => sum + value, 0);
-  $('resultMeta').textContent = (row.source === 'saved_config20' ? '과거 저장 기록 · Config 20 · ' : '') + '문서 ' + count + '건 · 검사 ' + result.checks.length + '개 · 결과 저장 ' + dateLabel(row.updated_at);
+  $('resultMeta').textContent = (!connection.settings_locked&&row.source === 'saved_config20' ? '과거 저장 기록 · Config 20 · ' : '') + '문서 ' + count + '건 · 검사 ' + result.checks.length + '개 · 결과 저장 ' + dateLabel(row.updated_at);
   const summary=resultSummary(result);
   const needsContext=summary.aggregateNeedsContext;
   $('resultContext').hidden=!needsContext;$('resultContextReasons').replaceChildren();
@@ -1064,12 +1067,14 @@ function openReport() {
     const source=element('button','원문에서 확인 →','button secondary');source.type='button';source.onclick=()=>{
       closeReport(false);reviewFilter='all';activateCheck(check);if(check.result==='PASS')checkFilter='all';paintChecks();focusReviewCard();
     };content.append(source);
-    const info=element('p',check.check_id,'report-check-id');content.append(info);card.append(content);checks.append(card);
+    if(!connection.settings_locked)content.append(element('p',check.check_id,'report-check-id'));card.append(content);checks.append(card);
   }
   body.append(checks);
-  const technical=element('details',undefined,'report-card report-technical');technical.append(element('summary','실행 정보 보기'));
-  const metadata=element('dl');for(const [name,value] of [['실제 결정값',currentRow.analysis.decision_value],['실행 분기',currentRow.analysis.executed_branch],['Job ID',currentRow.job_id],['Config',currentRow.settings_snapshot?.config_version]])metadataPair(metadata,name,value);
-  technical.append(metadata);body.append(technical);
+  if(!connection.settings_locked){
+    const technical=element('details',undefined,'report-card report-technical');technical.append(element('summary','실행 정보 보기'));
+    const metadata=element('dl');for(const [name,value] of [['실제 결정값',currentRow.analysis.decision_value],['실행 분기',currentRow.analysis.executed_branch],['Job ID',currentRow.job_id],['Config',currentRow.settings_snapshot?.config_version]])metadataPair(metadata,name,value);
+    technical.append(metadata);body.append(technical);
+  }
   document.body.classList.add('report-open');$('reportDialog').showModal();body.scrollTop=0;$('reportHeading').focus({preventScroll:true});
 }
 function closeReport(restoreFocus=true) {
@@ -1145,6 +1150,7 @@ $('refreshHistory').onclick = async () => {
   finally { $('refreshHistory').disabled = false; }
 };
 function openConnection() {
+  if(connection.settings_locked)return;
   const settings = connection.settings || {};
   $('agentInput').value = settings.agent_id || ''; $('projectInput').value = settings.project_id || 'proj_e88CHrANRG3JeEdUgt95vf';
   $('configInput').value = settings.config_version || ''; $('decisionInput').value = settings.decision_node || '';
@@ -1405,8 +1411,8 @@ function loadPublishedWorkflow(){
   try{
     const published=JSON.parse(data.textContent),model=parseWorkflowDiagram(published);
     renderWorkflowDiagram(model);
-    $('workflowMapStatus').textContent='Config '+published.config_version+' · 노드 '+model.nodes.length+'개 · 연결 '+model.edges.length+'개 · Studio Export 기준';
-  }catch{$('workflowMapStatus').textContent='워크플로우 구조도를 불러오지 못했어요. Export 파일로 확인해 주세요.';}
+    $('workflowMapStatus').textContent='현재 서비스의 검증 흐름 · 노드 '+model.nodes.length+'개 · 연결 '+model.edges.length+'개';
+  }catch{$('workflowMapStatus').textContent='흐름도를 불러오지 못했어요. 문서 검증은 계속 이용할 수 있어요.';}
 }
 loadPublishedWorkflow();
 const workflowReturnPoint=$('workflowMap').parentElement;
@@ -1416,22 +1422,13 @@ function closeWorkflow(restoreFocus=true){
   document.body.classList.remove('workflow-open');if(restoreFocus)$('workflowExpand').focus({preventScroll:true});
 }
 $('workflowExpand').onclick=()=>{
+  if($('workflowMap').hidden)return;
   $('workflowDialogHost').append($('workflowMap'));document.body.classList.add('workflow-open');
   $('workflowDialog').showModal();$('workflowMap').focus({preventScroll:true});
 };
 $('workflowClose').onclick=closeWorkflow;
 $('workflowDialog').addEventListener('cancel',event=>{event.preventDefault();closeWorkflow();});
 $('workflowDialog').addEventListener('close',()=>{if(document.body.classList.contains('workflow-open'))closeWorkflow();});
-$('workflowJson').addEventListener('change',async()=>{
-  const file=$('workflowJson').files[0];if(!file)return;
-  $('workflowMap').replaceChildren();$('workflowMap').hidden=true;
-  try{
-    if(file.size>5*1024*1024)throw Error('5 MB 이하의 워크플로우 JSON을 선택해 주세요.');
-    const text=await file.text();if($('workflowJson').files[0]!==file)return;
-    const model=parseWorkflowDiagram(JSON.parse(text));renderWorkflowDiagram(model);
-    $('workflowMapStatus').textContent=file.name+' · 노드 '+model.nodes.length+'개 · 연결 '+model.edges.length+'개 · 옆으로 밀어 전체 구조를 확인하세요.';
-  }catch(error){$('workflowMapStatus').textContent=error instanceof SyntaxError?'JSON 파일 내용을 읽지 못했어요. 올바른 Export 파일인지 확인해 주세요.':error.message;}
-});
 const motionSections=[...document.querySelectorAll('.about-workflow,.about-contribution')];
 if(typeof IntersectionObserver==='function'){
   const observer=new IntersectionObserver(entries=>{for(const entry of entries)if(entry.isIntersecting){entry.target.classList.add('flow-visible');observer.unobserve(entry.target);}},{threshold:.12});

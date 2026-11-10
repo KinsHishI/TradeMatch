@@ -88,6 +88,18 @@ class DeploymentTests(unittest.TestCase):
             self.assertEqual(accepted.status_code, 202)
             upload.assert_called_once_with('test.pdf', b'%PDF-test')
 
+    def test_downloaded_report_keeps_business_result_without_developer_metadata(self):
+        row = self.app.new_record('shipment.pdf', 'studio_api', {'config_version': 24}, job_id='job_internal')
+        self.app.update(row['id'], phase='completed', analysis={
+            'studio_status': 'FAIL', 'decision_value': 'FAIL', 'executed_branch': 'internal_branch',
+            'result': {'report': '포장 개수가 다릅니다.', 'checks': [], 'issues': []}})
+        response = self.client.get('/api/runs/' + row['id'] + '/report.html', headers=self.headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('포장 개수가 다릅니다.', response.text)
+        self.assertIn('불일치', response.text)
+        for internal in ['Job ID', 'job_internal', 'internal_branch', 'Config', 'Python']:
+            self.assertNotIn(internal, response.text)
+
     def test_existing_local_mode_remains_local_and_settings_editable(self):
         with TestClient(create_app(self.app), base_url='http://127.0.0.1:8765') as local:
             response = local.get('/api/connection')
