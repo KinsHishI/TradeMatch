@@ -20,7 +20,7 @@ from .server import MAX_UPLOAD, SETTINGS_KEYS
 
 STATIC = Path(__file__).parent / 'static'
 CSP = "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'"
-VERSION = 5
+VERSION = 6
 
 
 class LoginInput(BaseModel):
@@ -41,6 +41,11 @@ class ConnectionSettings(BaseModel):
 class ExistingJob(BaseModel):
     model_config = ConfigDict(extra='forbid', strict=True)
     job_id: str = Field(pattern=r'^job_[A-Za-z0-9]+$')
+
+
+class RetryRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    accept_duplicate_risk: bool = False
 
 
 async def bounded_body(request, limit):
@@ -208,7 +213,8 @@ def create_app(application, *, close_on_shutdown=False, deployment_access=None):
 
     @app.get('/api/runs/{run_id}')
     def record(run_id: str):
-        return result(run(run_id))
+        run(run_id)
+        return result(application.record_view(run_id))
 
     @app.get('/api/runs/{run_id}/source')
     def source(run_id: str):
@@ -269,9 +275,11 @@ def create_app(application, *, close_on_shutdown=False, deployment_access=None):
 
     @app.post('/api/runs/{run_id}/retry')
     async def retry(run_id: str, request: Request):
-        await bounded_body(request, 64 * 1024)
+        body = await bounded_body(request, 64 * 1024)
+        value = RetryRequest.model_validate(json.loads(body or '{}'))
         run(run_id)
-        return result(await run_in_threadpool(application.retry_failed, run_id), 202)
+        return result(await run_in_threadpool(application.retry_failed, run_id,
+                                             accept_duplicate_risk=value.accept_duplicate_risk), 202)
 
     @app.post('/api/demo/load')
     async def load_demo(request: Request):

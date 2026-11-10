@@ -295,6 +295,21 @@ def analyze(payload, *, decision_node='', expected=None):
     }
 
 
+def delivery_failure(analysis):
+    """Identify an explicit workflow delivery failure, without changing its verdict."""
+    analysis = analysis or {}
+    if analysis.get('contract_valid') is False:
+        return 'invalid_output'
+    result = analysis.get('result') or {}
+    checks = result.get('checks') or []
+    if (result.get('status') == 'REQUIRES_HUMAN_REVIEW'
+            and any(c.get('check_id') == 'FINAL_INPUT_RESULT_MISSING' for c in checks)
+            and all(c.get('result') == 'REQUIRES_HUMAN_REVIEW' and not c.get('documents') and not c.get('compared_values') for c in checks)
+            and any(i.get('type') == 'MISSING_DATA' and 'input' in i.get('fields', []) for i in result.get('issues', []))):
+        return 'workflow_input_missing'
+    return None
+
+
 def summarize(analyses):
     scored = [a for a in analyses if a.get('expected_status')]
     return {

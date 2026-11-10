@@ -125,6 +125,7 @@ function startClock(row) {
 async function renderRoute() {
   const token = ++routeToken;
   stopClock(); hoopGame.pause(); notice();
+  if($('errorPdfDialog').open){$('errorPdfDialog').close();$('errorPdfFrame').removeAttribute('src');}
   const params = new URLSearchParams(location.search), id = params.get('run'), view = params.get('view');
   const isHistory = !id && view === 'history', isAbout = !id && !['new','history','game'].includes(view), isNew = !id && ['new','game'].includes(view);
   document.title=(id?'검증 조회':isHistory?'검증 기록':isAbout?'서비스 소개':view==='game'?'PDF 자유투':'새 검증')+' · TradeMatch';
@@ -269,7 +270,11 @@ async function monitor(id, token) {
     currentRow = row;
     if (row.phase === 'completed') {
       stopClock();
-      if (!row.analysis?.contract_valid || !row.analysis?.result) { renderError(row, '처리는 완료됐지만 판정 결과의 형식을 확인하지 못했습니다.'); return; }
+      if (row.delivery_failure || !row.analysis?.contract_valid || !row.analysis?.result) {
+        const raw = await readRaw(id).catch(()=>null);
+        if(token===routeToken)renderError(row, row.delivery_failure ? null : '처리는 완료됐지만 판정 결과의 형식을 확인하지 못했습니다.',raw);
+        return;
+      }
       if(waitingResults.has(id)){paintReady(row);return;}
       const [source, raw] = await Promise.all([api('/api/runs/' + id + '/source'), readRaw(id).catch(() => null)]);
       if (token !== routeToken) return;
@@ -295,23 +300,34 @@ function renderError(row, override = null, raw = null) {
   document.title='실행 확인'+(row?.filename?' · '+row.filename:'')+' · TradeMatch';
   const phase = row?.phase, providerError = raw?.error || {};
   const terminalFailure = ['failed','cancelled','canceled','incomplete'].includes(phase);
-  const canRetry = terminalFailure && row?.job_id && raw?.id === row?.job_id && ['failed','cancelled','canceled','incomplete'].includes(raw?.status) && row?.file_id && connection.can_execute && row?.settings_snapshot?.project_id === connection.settings?.project_id;
+  const canRetry = connection.can_execute && (row?.retry ? row.retry.available : terminalFailure && row?.job_id && raw?.id===row?.job_id && ['failed','cancelled','canceled','incomplete'].includes(raw?.status) && row?.file_id && row?.settings_snapshot?.project_id===connection.settings?.project_id);
+  const uncertain = Boolean(row?.retry?.requires_confirmation);
   const failed = (Array.isArray(raw?.output) ? raw.output : []).filter(step => step.status === 'failed').map(step => step.model).filter(Boolean);
   let message = override || row?.message || '기록을 불러오지 못했습니다. 연결 상태와 검증 기록을 확인하세요.';
   if (!override && providerError.code === 'server_error') message = 'Studio에서 문서를 처리하던 중 오류로 실행이 종료됐어요.';
   if (!override && providerError.code === 'model_request_error') message = 'Studio에서 문서를 분석하는 중 문제가 생겼어요.';
+  if (!override && uncertain) message = 'PDF 전송이나 검증 요청 중 연결이 끊겨, 접수 여부를 확인하지 못했어요.';
   $('errorHeading').textContent = phase === 'completed' ? '결과를 읽지 못했어요.' : phase === 'paused' ? '결과를 불러오다 멈췄어요.' : '검증을 마치지 못했어요.';
   $('errorFilename').textContent = row?.filename || '';
   $('errorMessage').textContent = message;
   $('errorNext').textContent = phase === 'failed' ? '문서를 비교하는 도중 오류가 생겼어요. 일치 여부는 아직 판단하지 못했어요.\n연결 설정과 Studio 워크플로우를 확인해 주세요.' : ['creation_unknown','upload_unknown'].includes(phase) ? '요청이 접수됐는지 확인하지 못했어요. 다시 올리기 전에 Studio에서 기존 작업을 확인해 주세요.' : phase === 'completed' ? '새 실행 전에 원본 응답과 연결된 워크플로우의 출력 형식을 확인해주세요.' : row?.job_id ? '이어서 결과 확인을 누르면 이미 요청한 작업의 결과를 다시 불러와요.' : '연결 상태를 확인한 뒤 검증 기록을 확인해주세요.';
   $('retryRun').hidden = !canRetry;
   $('retryHint').hidden = !canRetry;
-  $('retryRun').disabled = retrySubmitting;
+  $('retryConsentInput').checked=false;
+  $('retryConsent').hidden = !canRetry || !uncertain;
+  $('retryRun').disabled = retrySubmitting || uncertain;
+  $('errorPdfOpen').hidden = !row?.has_pdf;
   $('resumeRun').hidden = !row?.job_id || terminalFailure || phase === 'completed' || !connection.can_retrieve;
-  if (canRetry) $('errorNext').textContent = '일치 여부를 판단하기 전에 실행이 종료됐어요. 다시 검증하기를 누르면 새 작업을 시작해요.';
+  if (canRetry) $('errorNext').textContent = uncertain ? '기존 요청이 Studio에 접수됐을 수도 있어요. 아래 내용을 확인하면 원본 PDF를 다시 보낼 수 있어요.' : '다시 검증하기를 누르면 원본 PDF를 Studio에 다시 보내고 처음부터 분석해요.';
+  if(row?.delivery_failure){
+    $('errorHeading').textContent='검증 결과를 만들지 못했어요.';
+    $('errorMessage').textContent=row.delivery_failure==='workflow_input_missing'?'PDF는 보관되어 있지만, 워크플로우가 앞 단계의 검사 결과를 읽지 못했어요. 문서의 일치 여부를 확인할 수 있는 결과가 아직 없어요.':'Studio 작업은 끝났지만, 검증 결과의 형식을 읽을 수 없어요.';
+    $('errorNext').textContent='원본 PDF를 확인하거나 다시 검증할 수 있어요. 같은 오류가 반복되면 워크플로우의 결과 전달 형식을 수정해야 해요.';
+  }
   $('errorRaw').hidden = !row?.raw_file;
   if (row?.raw_file) $('errorRaw').href = '/api/runs/' + row.id + '/raw';
   $('errorDetails').replaceChildren();
+  metadataPair($('errorDetails'), 'Studio 원본 판정', row?.analysis?.studio_status);
   metadataPair($('errorDetails'), '실행 상태', phaseLabel[phase] || phase || '기록 미확인');
   metadataPair($('errorDetails'), '오류 코드', providerError.code);
   metadataPair($('errorDetails'), '오류 단계', failed.join(', '));
@@ -328,17 +344,27 @@ $('resumeRun').onclick = async () => {
   finally { $('resumeRun').disabled = false; }
 };
 $('retryRun').onclick = async () => {
-  if (retrySubmitting || $('retryRun').hidden || !currentRow?.id) return;
+  if (retrySubmitting || $('retryRun').disabled || $('retryRun').hidden || !currentRow?.id) return;
   const id = currentRow.id, token = routeToken;
   retrySubmitting = true; $('retryRun').disabled = true;
   $('retryRun').textContent = '새 검증을 시작하는 중…';
   try {
-    const row = await post('/api/runs/' + id + '/retry');
+    const row = await post('/api/runs/' + id + '/retry', {accept_duplicate_risk:!$('retryConsent').hidden && $('retryConsentInput').checked});
     if (token === routeToken) { rememberWaiting(row.id); navigate('/?run=' + row.id); }
     else if (new URLSearchParams(location.search).get('view') === 'history') refreshHistory(routeToken).catch(error=>notice(error.message));
   } catch (error) { notice(error.message); }
-  finally { retrySubmitting = false; $('retryRun').disabled = false; $('retryRun').textContent = '다시 검증하기'; }
+  finally { retrySubmitting = false; $('retryRun').disabled = !$('retryConsent').hidden&&!$('retryConsentInput').checked; $('retryRun').textContent = '다시 검증하기'; }
 };
+$('retryConsentInput').onchange=()=>{$('retryRun').disabled=retrySubmitting||(!$('retryConsent').hidden&&!$('retryConsentInput').checked);};
+$('errorPdfOpen').onclick=()=>{
+  if(!currentRow?.has_pdf)return;
+  $('errorPdfHeading').textContent=currentRow.filename;
+  $('errorPdfFrame').src='/api/runs/'+currentRow.id+'/document.pdf';
+  $('errorPdfDialog').showModal();
+};
+function closeErrorPdf(){ $('errorPdfDialog').close();$('errorPdfFrame').removeAttribute('src');$('errorPdfOpen').focus({preventScroll:true}); }
+$('errorPdfClose').onclick=closeErrorPdf;
+$('errorPdfDialog').addEventListener('close',()=>{$('errorPdfFrame').removeAttribute('src');});
 // Display-only provenance: no verdict, conversion, or invoice arithmetic is performed here.
 const rawCache = new Map();
 let activeCheck = null, evidenceRefs = [], averageSeconds = null, estimateRequest = 0;
@@ -1186,7 +1212,7 @@ async function refreshHistory(token = routeToken) {
 }
 function historyCategory(row) {
   if(activePhases.has(row.phase))return 'active';
-  if(row.phase!=='completed')return 'unfinished';
+  if(row.phase!=='completed'||row.delivery_failure)return 'unfinished';
   return ['PASS','FAIL','REQUIRES_HUMAN_REVIEW'].includes(row.studio_status)?row.studio_status:'unknown';
 }
 function paintHistory(animate=false) {
@@ -1209,8 +1235,8 @@ function paintHistory(animate=false) {
     link.style.setProperty('--row-order',String(Math.min(index,5)));
     link.classList.toggle('is-processing',historyCategory(row)==='active');
     const info = element('div'); info.append(element('strong', row.filename), element('small', '접수 '+dateLabel(row.created_at) + (row.settings_snapshot?.config_version ? ' · 검증 버전 ' + row.settings_snapshot.config_version : '')));
-    const verdict = row.phase === 'completed' ? row.studio_status : null;
-    link.append(info, element('span', verdict ? statusLabel(verdict) : row.phase === 'completed' ? '결과 확인 필요' : phaseLabel[row.phase] || row.phase, 'status-pill ' + statusTone(verdict)), element('span', '→', 'row-arrow'));
+    const verdict = row.phase === 'completed' && !row.delivery_failure ? row.studio_status : null;
+    link.append(info, element('span', verdict ? statusLabel(verdict) : row.delivery_failure ? '결과 생성 오류' : row.phase === 'completed' ? '결과 확인 필요' : phaseLabel[row.phase] || row.phase, 'status-pill ' + statusTone(verdict)), element('span', '→', 'row-arrow'));
     $('runHistory').append(link);
   }
 }

@@ -14,6 +14,7 @@ from service.access import DeploymentAccess, LoginSessions, SESSION_COOKIE, SESS
 from service.deployment import configuration, create_deployment_app
 from service.server import Application
 from service.api_client import APIError
+from service.results import delivery_failure
 from service.web import create_app
 
 
@@ -83,7 +84,7 @@ class DeploymentTests(unittest.TestCase):
             accepted = self.client.post(path, json={}, headers=self.headers)
             self.assertEqual(accepted.status_code, 202)
             self.assertEqual(accepted.json()['id'], 'b' * 32)
-            retry.assert_called_once_with(row['id'])
+            retry.assert_called_once_with(row['id'], accept_duplicate_risk=False)
 
     def test_valid_viewer_can_read_but_cannot_change_workflow_or_import_jobs(self):
         connection = self.client.get('/api/connection', headers=self.headers)
@@ -219,8 +220,9 @@ class RetryTests(unittest.TestCase):
         self.ambiguous = False
         owner = self
         class Client:
-            def upload(self, *args):
-                raise AssertionError('Retry must reuse the existing Project file')
+            def upload(self, filename, pdf):
+                owner.calls.append(('upload', pdf.read_bytes()))
+                return 'file_new'
             def create_job(self, file_id):
                 owner.calls.append(('create', file_id))
                 if owner.ambiguous:
@@ -251,6 +253,7 @@ class RetryTests(unittest.TestCase):
 
     def test_retry_preserves_parent_pdf_and_original_config_with_one_new_job(self):
         parent = self.parent()
+        self.assertIsNone(self.app.record_view(parent['id'])['delivery_failure'])
         old_raw = (self.app.directory(parent['id']) / parent['raw_file']).read_bytes()
         self.app.save_settings({'config_version': 5})
         child = self.app.retry_failed(parent['id'])
@@ -263,7 +266,8 @@ class RetryTests(unittest.TestCase):
         self.assertEqual(self.app.pdf_path(child['id']).read_bytes(), b'%PDF-test')
         self.assertEqual(self.app.get(parent['id']), parent)
         self.assertEqual((self.app.directory(parent['id']) / parent['raw_file']).read_bytes(), old_raw)
-        self.assertEqual(self.calls, [('create', 'file_old'), ('retrieve', 'job_new')])
+        self.assertEqual(child['file_id'], 'file_new')
+        self.assertEqual(self.calls, [('upload', b'%PDF-test'), ('create', 'file_new'), ('retrieve', 'job_new')])
         self.assertEqual(self.app.retry_failed(parent['id'])['id'], child['id'])
         self.app.save_settings({'config_version': 4})
         self.assertEqual(self.app.start_upload('renamed.pdf', b'%PDF-test')['id'], child['id'])
@@ -303,9 +307,6 @@ class RetryTests(unittest.TestCase):
         self.app.update(parent['id'], phase='failed')
         with self.assertRaises(ValueError): self.app.retry_failed(parent['id'])
         parent = self.parent()
-        self.app.update(parent['id'], file_id='')
-        with self.assertRaises(ValueError): self.app.retry_failed(parent['id'])
-        parent = self.parent()
         self.app.pdf_path(parent['id']).unlink()
         with self.assertRaises(FileNotFoundError): self.app.retry_failed(parent['id'])
         parent = self.parent()
@@ -325,4 +326,51 @@ class RetryTests(unittest.TestCase):
             with self.assertRaises(ValueError): peer.retry_failed(child['id'])
         finally:
             peer.close()
-        self.assertEqual(self.calls, [('create', 'file_old')])
+        self.assertEqual(self.calls, [('upload', b'%PDF-test'), ('create', 'file_new')])
+
+
+    def test_uncertain_request_requires_confirmation_and_reuploads_the_original(self):
+        for phase in ['creation_unknown', 'upload_unknown', 'paused']:
+            parent = self.parent()
+            self.app.update(parent['id'], phase=phase, job_id=None, file_id=None)
+            with self.assertRaises(ValueError): self.app.retry_failed(parent['id'])
+            before = len(self.calls)
+            child = self.app.retry_failed(parent['id'], accept_duplicate_risk=True)
+            self.finish()
+            self.assertEqual(self.calls[before:], [('upload', b'%PDF-test'), ('create', 'file_new'), ('retrieve', 'job_new')])
+            self.assertEqual(self.app.retry_failed(parent['id'], accept_duplicate_risk=True)['id'], child['id'])
+
+    def test_workflow_delivery_failure_is_retryable_without_changing_the_verdict(self):
+        parent = self.parent()
+        result = {'status':'REQUIRES_HUMAN_REVIEW', 'document_counts':dict.fromkeys(['PO','CI','PL','BL','OTHER']),
+                  'relationships':[], 'checks':[{'check_id':'FINAL_INPUT_RESULT_MISSING', 'documents':[],
+                  'compared_values':[], 'result':'REQUIRES_HUMAN_REVIEW', 'basis':'Input result unavailable'}],
+                  'issues':[{'type':'MISSING_DATA','documents':[],'fields':['input'],'detail':'Upstream format unavailable'}]}
+        raw={'id':'job_old','status':'completed','output':[{'model':'Instruct - final','status':'completed',
+             'content':[{'type':'output_text','text':json.dumps(result)}]}]}
+        self.app.update(parent['id'], settings_snapshot=self.app.settings()|{'decision_node':'final'})
+        self.app.save_result(parent['id'],raw)
+        view=self.app.record_view(parent['id'])
+        self.assertEqual(view['delivery_failure'],'workflow_input_missing')
+        self.assertTrue(view['has_pdf']);self.assertTrue(view['retry']['available'])
+        self.assertEqual(view['analysis']['result'],result)
+        child=self.app.retry_failed(parent['id']);self.finish()
+        self.assertNotEqual(child['id'],parent['id'])
+        self.assertEqual(self.app.get(parent['id'])['analysis']['result'],result)
+        # An ordinary review, or a result containing real comparisons, is not a delivery failure.
+        result['checks'][0]['check_id']='PO_CI_QUANTITY'
+        self.assertIsNone(delivery_failure({'result':result,'contract_valid':True}))
+        result['checks'][0]['check_id']='FINAL_INPUT_RESULT_MISSING'
+        result['checks'][0]['documents']=['PO:0']
+        self.assertIsNone(delivery_failure({'result':result,'contract_valid':True}))
+
+    def test_uncertain_retry_api_never_treats_a_string_as_confirmation(self):
+        parent=self.parent()
+        self.app.update(parent['id'],phase='creation_unknown',job_id=None)
+        with TestClient(create_app(self.app),base_url='http://127.0.0.1:8765') as client:
+            path='/api/runs/'+parent['id']+'/retry'
+            for body in [{},{'accept_duplicate_risk':False},{'accept_duplicate_risk':'true'}]:
+                self.assertIn(client.post(path,json=body).status_code,[400,422])
+            self.assertEqual(self.calls,[])
+            self.assertEqual(client.post(path,json={'accept_duplicate_risk':True}).status_code,202)
+            self.finish()

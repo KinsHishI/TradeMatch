@@ -8,13 +8,13 @@
     "service/evaluate.py": "d4d89198bfc1bb61bac8caf7f55fd740c8285149e24e9ff366320dda0a99bcfa",
     "service/previews.py": "3786e04ad1214da14bb7a38bf2fbb9c69400ab1f59c304023149d3abee6c7332",
     "service/report.py": "4a3df35001b5770c3f38c709acb8a251486cfccbee992321664c35091abd9791",
-    "service/results.py": "d7f5d9e461a33953c8c048138982d4b5fac82f5b4c9f39bff74658ba60c90bde",
-    "service/server.py": "34a78dfe597be403b60c146571f13adcc8ff735e6cc93f943b5d762bf4e16d2e",
-    "service/web.py": "4f6e2568cbc331b87dd0bf23d703faa9e92fe8d353e6fb3a3e0b1d14070a1437",
+    "service/results.py": "0143c39e945bef73067b598cb62cdc6c4c373ec58075151ae64bd15a124e6a82",
+    "service/server.py": "d3bbb9cdfccee2abaf638be39b708c9d1dba73b3afed660eacd3eeaa0e7a3703",
+    "service/web.py": "31e67360bb3159d743d93999125245fedff1d7a29fa56ecb8d5be552e39341a4",
     "service/requirements.txt": "db7f499866e6bb2ec703fc6a0cd2bbd1936df9bb069f3cad0967e784a5d6560a",
-    "service/static/product.html": "e48f4fa90aef1557d114318fc840297240617ff95594afcfb1b93ad7800d6dcd",
-    "service/static/product.js": "c0409bbebae1bdc117e93885a529a817fa0bf1121c9de15c1adbc2809134cd5c",
-    "service/static/product.css": "d279ea6005d129f9d53cb564913050f3df3f1a495cdc8808e7a76dc37a75abe6",
+    "service/static/product.html": "c75307fdbc584a4621db06f9c4f6079d02118d4e3f565accb1896d034347c8d6",
+    "service/static/product.js": "8514fd516aefa80fe1369dde53b8cf1a678504d3da99e6f5b654e9e5a99e4095",
+    "service/static/product.css": "e841ac8eb032b848de451ca74ae2d31d278a48d28cb069d291df2d8e73dbbebb",
     "service/static/report.css": "291b1844f551421991b7de9dc5b9fda84b19913065efdc6fac3db384f59b1b51",
     "service/static/login.html": "b7fe4eeaeaf856200a2b474a9559bc7c5a6886b1eb3520c83384bae3120811de",
     "service/static/login.js": "50c5a192daf5810a98a9b5c88f5b7d8b64981f8599bc0bdcab903b9d3e372b80",
@@ -23,9 +23,9 @@
     "railway.toml": "921314fca9bac0f71dcf726d0b03bf14491b033525f23a1a5ea4eadafa9ffd3f",
     ".dockerignore": "98ab51c7951e434e71ed229cb90edfd941a1e2537cf2d639778382df1b8a3510",
     ".gitignore": "7123f1cde202b9ddf2dd81d6a8b078d8e09d49b5b3fc9af958b69d204b5cd213",
-    "README.md": "0702e21b99f46980adbb2bad21c802c3d0790084eab57a65d628319ab001d4ce",
+    "README.md": "d335fb44efc4747983072b53224569a1b5da2b74ad4957916731fe1e4a0eba40",
     "railway-variables.example": "bd43ff77d4734787fca02842df5d963cf106ee0a2ab3605bd8b3d779f2f3b485",
     "service/tests/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "service/tests/test_deployment.py": "c12687a2e9a9057e17f6f333e9e3739107209d71a053f450557cf6dd87975a18"
+    "service/tests/test_deployment.py": "5d0e422e81189aea2741cd01f349fb86559b6f0c2216f3a66ee51d198f1226f0"
   }
 }

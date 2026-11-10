@@ -15,7 +15,7 @@ from pathlib import Path
 
 from .api_client import APIError, UpstageClient
 from .evaluate import DEFAULT_EXPECTED, ROOT, expected_for, filename_for
-from .results import analyze, decode, metadata, summarize
+from .results import analyze, decode, metadata, summarize, delivery_failure
 from .report import report_html, style_hash
 from .previews import render_page, renderer, cached_preview
 
@@ -199,7 +199,8 @@ class Application:
             analysis = row.get('analysis', {})
             values.append({k: row.get(k) for k in ['id', 'filename', 'phase', 'source', 'job_id', 'file_id', 'message', 'created_at', 'updated_at', 'settings_snapshot']}
                           | {k: analysis.get(k) for k in ['studio_status', 'expected_status', 'expected_status_match', 'contract_valid', 'decision_value', 'executed_branch']}
-                          | {'evidence_findings': len(analysis.get('evidence_audit', {}).get('findings', [])),
+                          | {'delivery_failure': delivery_failure(analysis) if row['phase'] == 'completed' else None,
+                             'evidence_findings': len(analysis.get('evidence_audit', {}).get('findings', [])),
                              'technical_count': len(analysis.get('technical_issues', []))})
         return sorted(values, key=lambda r: r['created_at'], reverse=True)
 
@@ -329,7 +330,33 @@ class Application:
             self.resume(row['id'])
             return self.get(row['id'])
 
-    def retry_failed(self, run_id):
+    def retry_reason(self, row):
+        phase = row['phase']
+        if phase in {'creation_unknown', 'upload_unknown'} or (phase == 'paused' and not row.get('job_id')):
+            return 'uncertain_request'
+        if phase not in RETRYABLE | {'completed'} or not row.get('raw_file') or not row.get('job_id'):
+            return None
+        payload = json.loads((self.directory(row['id']) / row['raw_file']).read_text())
+        if payload.get('id') != row['job_id']:
+            return None
+        if phase in RETRYABLE and payload.get('status') in RETRYABLE:
+            return 'execution_failed'
+        if phase == payload.get('status') == 'completed':
+            return delivery_failure(row.get('analysis', {}))
+        return None
+
+    def record_view(self, run_id):
+        row = self.get(run_id)
+        reason = self.retry_reason(row)
+        snapshot = row.get('settings_snapshot', {})
+        available = bool(reason and self._key and snapshot.get('project_id') == self.settings()['project_id']
+                         and (self.directory(run_id) / 'source.pdf').is_file())
+        return row | {'has_pdf': (self.directory(run_id) / 'source.pdf').is_file(),
+                      'delivery_failure': delivery_failure(row.get('analysis', {})) if row['phase'] == 'completed' else None,
+                      'retry': {'available': available, 'reason': reason,
+                                'requires_confirmation': reason == 'uncertain_request'}}
+
+    def retry_failed(self, run_id, *, accept_duplicate_risk=False):
         """Explicit new Job; one durable child per failed parent, never a POST retry."""
         with self.lock:
             parent = self.get(run_id)
@@ -338,28 +365,26 @@ class Application:
                 return child
             if not self._key:
                 raise ValueError('서버의 API 키 환경변수가 필요합니다.')
-            if parent['phase'] not in RETRYABLE or not parent.get('raw_file') or not parent.get('job_id'):
-                raise ValueError('Studio에서 실행 실패가 확인된 작업만 새로 검증할 수 있습니다.')
-            payload = json.loads((self.directory(run_id) / parent['raw_file']).read_text())
-            if payload.get('id') != parent['job_id'] or payload.get('status') not in RETRYABLE:
-                raise ValueError('기존 작업의 최종 실패 상태를 먼저 확인해 주세요.')
+            reason = self.retry_reason(parent)
+            if not reason:
+                raise ValueError('실행 실패나 결과 생성 오류가 있는 작업만 다시 검증할 수 있습니다.')
+            if reason == 'uncertain_request' and accept_duplicate_risk is not True:
+                raise ValueError('기존 요청이 접수됐을 수 있습니다. 중복 실행 가능성을 확인한 뒤 다시 검증해 주세요.')
             snapshot = parent['settings_snapshot']
             if (not re.fullmatch(r'agt_[A-Za-z0-9]+', snapshot.get('agent_id', ''))
                     or not re.fullmatch(r'proj_[A-Za-z0-9]+', snapshot.get('project_id', ''))
                     or type(snapshot.get('config_version')) is not int or snapshot['config_version'] < 1
                     or snapshot['project_id'] != self.settings()['project_id']):
                 raise ValueError('기존 검증 버전과 Project 연결을 확인해 주세요.')
-            file_id = parent.get('file_id', '')
-            if not re.fullmatch(r'file[_-][A-Za-z0-9-]+', file_id):
-                raise ValueError('보관된 업로드 파일을 확인할 수 없습니다. PDF를 다시 등록해 주세요.')
             data = self.pdf_path(run_id).read_bytes()
             digest = hashlib.sha256(data + json.dumps(snapshot, sort_keys=True).encode()).hexdigest()
             child = self.new_record(parent['filename'], 'studio_retry', snapshot, retry_of=run_id,
-                                    fingerprint=digest, file_id=file_id, phase='creating_job',
-                                    message='같은 PDF와 검증 버전으로 새 작업을 시작합니다.')
+                                    fingerprint=digest, retry_reason=reason, phase='uploading',
+                                    message='보관된 원본 PDF를 Studio에 다시 보내고 있습니다.')
             pdf = self.directory(child['id']) / 'source.pdf'
             pdf.write_bytes(data)
             pdf.chmod(0o600)
+            self.update(child['id'], upload_filename=timestamped_upload_name(parent['filename'], child['created_at']))
             self._claim_run(child['id'])
             self._submit_run(child['id'], True)
             return self.get(child['id'])
@@ -387,10 +412,8 @@ class Application:
             row = self.get(run_id)
             client = self.client_factory(row['settings_snapshot'], self._key)
             if create:
-                file_id = row.get('file_id') if row.get('retry_of') else None
-                if not file_id:
-                    phase = 'uploading'
-                    file_id = client.upload(row.get('upload_filename', row['filename']), pdf)
+                phase = 'uploading'
+                file_id = client.upload(row.get('upload_filename', row['filename']), pdf)
                 self.update(run_id, file_id=file_id, phase='creating_job', message='지정한 Studio 설정으로 작업을 생성합니다.')
                 phase = 'creating_job'
                 job_id = client.create_job(file_id)
