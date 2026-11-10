@@ -2,6 +2,9 @@
 import json
 from pathlib import Path
 import tempfile
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 import unittest
 from unittest.mock import patch
 
@@ -10,6 +13,7 @@ from fastapi.testclient import TestClient
 from service.access import DeploymentAccess, LoginSessions, SESSION_COOKIE, SESSION_SECONDS, login_target
 from service.deployment import configuration, create_deployment_app
 from service.server import Application
+from service.api_client import APIError
 from service.web import create_app
 
 
@@ -66,6 +70,20 @@ class DeploymentTests(unittest.TestCase):
                 upload.assert_not_called()
             self.assertEqual(visitor.get('/api/runs', auth=('demo', 'test-only-access-password')).status_code, 401)
         self.assertEqual(self.client.get('/api/health').status_code, 200)
+
+    def test_retry_requires_session_and_same_origin_before_starting_work(self):
+        row = self.app.new_record('failed.pdf', 'test', self.app.settings())
+        path = '/api/runs/' + row['id'] + '/retry'
+        with patch.object(self.app, 'retry_failed', return_value={'id': 'b' * 32, 'phase': 'queued'}) as retry:
+            with TestClient(self.client.app, base_url='https://tradematch.example') as visitor:
+                self.assertEqual(visitor.post(path, json={}, headers=self.headers).status_code, 401)
+            for origin in ['', 'null', 'https://unrelated.example']:
+                self.assertEqual(self.client.post(path, json={}, headers={'Origin': origin}).status_code, 403)
+            retry.assert_not_called()
+            accepted = self.client.post(path, json={}, headers=self.headers)
+            self.assertEqual(accepted.status_code, 202)
+            self.assertEqual(accepted.json()['id'], 'b' * 32)
+            retry.assert_called_once_with(row['id'])
 
     def test_valid_viewer_can_read_but_cannot_change_workflow_or_import_jobs(self):
         connection = self.client.get('/api/connection', headers=self.headers)
@@ -191,3 +209,120 @@ class DeploymentTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class RetryTests(unittest.TestCase):
+    """All Studio operations are fakes, including the new Job creation."""
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.calls = []
+        self.ambiguous = False
+        owner = self
+        class Client:
+            def upload(self, *args):
+                raise AssertionError('Retry must reuse the existing Project file')
+            def create_job(self, file_id):
+                owner.calls.append(('create', file_id))
+                if owner.ambiguous:
+                    raise APIError('Unknown response', ambiguous=True)
+                return 'job_new'
+            def retrieve(self, job_id):
+                owner.calls.append(('retrieve', job_id))
+                return {'id': job_id, 'status': 'failed', 'error': {'code': 'server_error'}, 'output': []}
+        self.factory = lambda snapshot, key: Client()
+        self.app = Application(self.temp.name, api_key='test-only-token', client_factory=self.factory, poll_interval=0)
+        self.app.save_settings({'agent_id': 'agt_test', 'project_id': 'proj_test', 'config_version': 4})
+
+    def tearDown(self):
+        self.app.close()
+        self.temp.cleanup()
+
+    def parent(self):
+        row = self.app.new_record('failed.pdf', 'studio_api', self.app.settings(), job_id='job_old', file_id='file_old')
+        (self.app.directory(row['id']) / 'source.pdf').write_bytes(b'%PDF-test')
+        self.app.save_result(row['id'], {'id': 'job_old', 'status': 'failed', 'output': [], 'error': {'code': 'server_error'}})
+        return self.app.get(row['id'])
+
+    def finish(self):
+        deadline = time.monotonic() + 4
+        while self.app.busy and time.monotonic() < deadline:
+            time.sleep(.01)
+        self.assertFalse(self.app.busy)
+
+    def test_retry_preserves_parent_pdf_and_original_config_with_one_new_job(self):
+        parent = self.parent()
+        old_raw = (self.app.directory(parent['id']) / parent['raw_file']).read_bytes()
+        self.app.save_settings({'config_version': 5})
+        child = self.app.retry_failed(parent['id'])
+        self.finish()
+        child = self.app.get(child['id'])
+        self.assertNotEqual(parent['id'], child['id'])
+        self.assertEqual(child['retry_of'], parent['id'])
+        self.assertEqual(child['settings_snapshot']['config_version'], 4)
+        self.assertEqual(child['job_id'], 'job_new')
+        self.assertEqual(self.app.pdf_path(child['id']).read_bytes(), b'%PDF-test')
+        self.assertEqual(self.app.get(parent['id']), parent)
+        self.assertEqual((self.app.directory(parent['id']) / parent['raw_file']).read_bytes(), old_raw)
+        self.assertEqual(self.calls, [('create', 'file_old'), ('retrieve', 'job_new')])
+        self.assertEqual(self.app.retry_failed(parent['id'])['id'], child['id'])
+        self.app.save_settings({'config_version': 4})
+        self.assertEqual(self.app.start_upload('renamed.pdf', b'%PDF-test')['id'], child['id'])
+        # A subsequent attempt requires an explicit retry of the failed child.
+        grandchild = self.app.retry_failed(child['id'])
+        self.finish()
+        self.assertEqual(grandchild['retry_of'], child['id'])
+        self.assertEqual(sum(c[0] == 'create' for c in self.calls), 2)
+
+    def test_concurrent_servers_create_only_one_child(self):
+        parent = self.parent()
+        peer = Application(self.temp.name, api_key='test-only-token', client_factory=self.factory, poll_interval=0)
+        barrier = threading.Barrier(2)
+        def retry(app):
+            barrier.wait(timeout=3)
+            return app.retry_failed(parent['id'])
+        try:
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                children = list(pool.map(retry, [self.app, peer]))
+            self.assertEqual(children[0]['id'], children[1]['id'])
+            self.finish()
+        finally:
+            peer.close()
+        self.assertEqual(sum(c[0] == 'create' for c in self.calls), 1)
+
+    def test_unconfirmed_or_business_results_never_create_a_job(self):
+        for phase in ['completed', 'queued', 'in_progress', 'paused', 'creation_unknown', 'upload_unknown', 'error']:
+            parent = self.parent()
+            self.app.update(parent['id'], phase=phase)
+            with self.subTest(phase=phase), self.assertRaises(ValueError):
+                self.app.retry_failed(parent['id'])
+        parent = self.parent()
+        self.app.save_result(parent['id'], {'id': 'job_other', 'status': 'failed', 'output': []})
+        with self.assertRaises(ValueError): self.app.retry_failed(parent['id'])
+        parent = self.parent()
+        self.app.save_result(parent['id'], {'id': 'job_old', 'status': 'queued', 'output': []})
+        self.app.update(parent['id'], phase='failed')
+        with self.assertRaises(ValueError): self.app.retry_failed(parent['id'])
+        parent = self.parent()
+        self.app.update(parent['id'], file_id='')
+        with self.assertRaises(ValueError): self.app.retry_failed(parent['id'])
+        parent = self.parent()
+        self.app.pdf_path(parent['id']).unlink()
+        with self.assertRaises(FileNotFoundError): self.app.retry_failed(parent['id'])
+        parent = self.parent()
+        self.app.save_settings({'project_id': 'proj_other'})
+        with self.assertRaises(ValueError): self.app.retry_failed(parent['id'])
+        self.assertEqual(self.calls, [])
+
+    def test_ambiguous_creation_and_restart_never_repeat_the_post(self):
+        parent = self.parent()
+        self.ambiguous = True
+        child = self.app.retry_failed(parent['id'])
+        self.finish()
+        self.assertEqual(self.app.get(child['id'])['phase'], 'creation_unknown')
+        peer = Application(self.temp.name, api_key='test-only-token', client_factory=self.factory)
+        try:
+            self.assertEqual(peer.retry_failed(parent['id'])['id'], child['id'])
+            with self.assertRaises(ValueError): peer.retry_failed(child['id'])
+        finally:
+            peer.close()
+        self.assertEqual(self.calls, [('create', 'file_old')])

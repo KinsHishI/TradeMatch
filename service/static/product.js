@@ -289,18 +289,26 @@ async function monitor(id, token) {
 function metadataPair(container, name, value) {
   container.append(element('dt', name), element('dd', value === null || value === undefined || value === '' ? '미확인' : String(value)));
 }
+let retrySubmitting = false;
 function renderError(row, override = null, raw = null) {
   stopClock(); showPage('errorView'); currentRow = row;
   document.title='실행 확인'+(row?.filename?' · '+row.filename:'')+' · TradeMatch';
   const phase = row?.phase, providerError = raw?.error || {};
+  const terminalFailure = ['failed','cancelled','canceled','incomplete'].includes(phase);
+  const canRetry = terminalFailure && row?.job_id && raw?.id === row?.job_id && ['failed','cancelled','canceled','incomplete'].includes(raw?.status) && row?.file_id && connection.can_execute && row?.settings_snapshot?.project_id === connection.settings?.project_id;
   const failed = (Array.isArray(raw?.output) ? raw.output : []).filter(step => step.status === 'failed').map(step => step.model).filter(Boolean);
   let message = override || row?.message || '기록을 불러오지 못했습니다. 연결 상태와 검증 기록을 확인하세요.';
+  if (!override && providerError.code === 'server_error') message = 'Studio에서 문서를 처리하던 중 오류로 실행이 종료됐어요.';
   if (!override && providerError.code === 'model_request_error') message = 'Studio에서 문서를 분석하는 중 문제가 생겼어요.';
   $('errorHeading').textContent = phase === 'completed' ? '결과를 읽지 못했어요.' : phase === 'paused' ? '결과를 불러오다 멈췄어요.' : '검증을 마치지 못했어요.';
   $('errorFilename').textContent = row?.filename || '';
   $('errorMessage').textContent = message;
   $('errorNext').textContent = phase === 'failed' ? '문서를 비교하는 도중 오류가 생겼어요. 일치 여부는 아직 판단하지 못했어요.\n연결 설정과 Studio 워크플로우를 확인해 주세요.' : ['creation_unknown','upload_unknown'].includes(phase) ? '요청이 접수됐는지 확인하지 못했어요. 다시 올리기 전에 Studio에서 기존 작업을 확인해 주세요.' : phase === 'completed' ? '새 실행 전에 원본 응답과 연결된 워크플로우의 출력 형식을 확인해주세요.' : row?.job_id ? '이어서 결과 확인을 누르면 이미 요청한 작업의 결과를 다시 불러와요.' : '연결 상태를 확인한 뒤 검증 기록을 확인해주세요.';
-  $('resumeRun').hidden = !row?.job_id || phase === 'completed' || !connection.can_retrieve;
+  $('retryRun').hidden = !canRetry;
+  $('retryHint').hidden = !canRetry;
+  $('retryRun').disabled = retrySubmitting;
+  $('resumeRun').hidden = !row?.job_id || terminalFailure || phase === 'completed' || !connection.can_retrieve;
+  if (canRetry) $('errorNext').textContent = '일치 여부를 판단하기 전에 실행이 종료됐어요. 다시 검증하기를 누르면 새 작업을 시작해요.';
   $('errorRaw').hidden = !row?.raw_file;
   if (row?.raw_file) $('errorRaw').href = '/api/runs/' + row.id + '/raw';
   $('errorDetails').replaceChildren();
@@ -318,6 +326,18 @@ $('resumeRun').onclick = async () => {
   try { await post('/api/runs/' + id + '/resume'); navigate('/?run=' + id, {replace:true}); }
   catch (error) { notice(error.message); }
   finally { $('resumeRun').disabled = false; }
+};
+$('retryRun').onclick = async () => {
+  if (retrySubmitting || $('retryRun').hidden || !currentRow?.id) return;
+  const id = currentRow.id, token = routeToken;
+  retrySubmitting = true; $('retryRun').disabled = true;
+  $('retryRun').textContent = '새 검증을 시작하는 중…';
+  try {
+    const row = await post('/api/runs/' + id + '/retry');
+    if (token === routeToken) { rememberWaiting(row.id); navigate('/?run=' + row.id); }
+    else if (new URLSearchParams(location.search).get('view') === 'history') refreshHistory(routeToken).catch(error=>notice(error.message));
+  } catch (error) { notice(error.message); }
+  finally { retrySubmitting = false; $('retryRun').disabled = false; $('retryRun').textContent = '다시 검증하기'; }
 };
 // Display-only provenance: no verdict, conversion, or invoice arithmetic is performed here.
 const rawCache = new Map();
@@ -914,7 +934,7 @@ async function paintTimeEstimate(row, token) {
   setTimeEstimate('문서 분석·비교는 분 단위로 진행될 수 있습니다.');
   try {
     const {runs}=await api('/api/runs'), settings=row.settings_snapshot||{};
-    const rows=runs.filter(item=>item.phase==='completed' && item.source==='studio_api' && item.job_id!==row.job_id && item.settings_snapshot?.agent_id===settings.agent_id && item.settings_snapshot?.project_id===settings.project_id && item.settings_snapshot?.config_version===settings.config_version);
+    const rows=runs.filter(item=>item.phase==='completed' && ['studio_api','studio_retry'].includes(item.source) && item.job_id!==row.job_id && item.settings_snapshot?.agent_id===settings.agent_id && item.settings_snapshot?.project_id===settings.project_id && item.settings_snapshot?.config_version===settings.config_version);
     const seen=new Set(), recent=rows.filter(item=>{if(seen.has(item.job_id))return false;seen.add(item.job_id);return true;}).slice(0,8);
     const values=await Promise.allSettled(recent.map(item=>readRaw(item.id)));
     if(token!==routeToken||request!==estimateRequest)return;

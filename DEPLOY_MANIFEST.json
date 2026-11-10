@@ -9,11 +9,11 @@
     "service/previews.py": "3786e04ad1214da14bb7a38bf2fbb9c69400ab1f59c304023149d3abee6c7332",
     "service/report.py": "4a3df35001b5770c3f38c709acb8a251486cfccbee992321664c35091abd9791",
     "service/results.py": "d7f5d9e461a33953c8c048138982d4b5fac82f5b4c9f39bff74658ba60c90bde",
-    "service/server.py": "4412850e7c0690d19afb653050555dae3377d99fb17bbd08c98e71ac30feb02d",
-    "service/web.py": "de07194ce1682e8ea0c99f0a6f4860edc77632bed219821f3d1606f451161095",
+    "service/server.py": "34a78dfe597be403b60c146571f13adcc8ff735e6cc93f943b5d762bf4e16d2e",
+    "service/web.py": "4f6e2568cbc331b87dd0bf23d703faa9e92fe8d353e6fb3a3e0b1d14070a1437",
     "service/requirements.txt": "db7f499866e6bb2ec703fc6a0cd2bbd1936df9bb069f3cad0967e784a5d6560a",
-    "service/static/product.html": "08cb5c80498041737b9c0276be0fff4fa9ea7b6b13e5e33b6b2858ba9c8ddff6",
-    "service/static/product.js": "21aa79527f211c4bea3ff9b9084adb72904ae7d9256f8b06ac414170f930c375",
+    "service/static/product.html": "e48f4fa90aef1557d114318fc840297240617ff95594afcfb1b93ad7800d6dcd",
+    "service/static/product.js": "c0409bbebae1bdc117e93885a529a817fa0bf1121c9de15c1adbc2809134cd5c",
     "service/static/product.css": "d279ea6005d129f9d53cb564913050f3df3f1a495cdc8808e7a76dc37a75abe6",
     "service/static/report.css": "291b1844f551421991b7de9dc5b9fda84b19913065efdc6fac3db384f59b1b51",
     "service/static/login.html": "b7fe4eeaeaf856200a2b474a9559bc7c5a6886b1eb3520c83384bae3120811de",
@@ -23,9 +23,9 @@
     "railway.toml": "921314fca9bac0f71dcf726d0b03bf14491b033525f23a1a5ea4eadafa9ffd3f",
     ".dockerignore": "98ab51c7951e434e71ed229cb90edfd941a1e2537cf2d639778382df1b8a3510",
     ".gitignore": "7123f1cde202b9ddf2dd81d6a8b078d8e09d49b5b3fc9af958b69d204b5cd213",
-    "README.md": "4e7ef52f5ee187e12f0c254be245957412897e2f2d04f47db0d837f722d7c2d3",
+    "README.md": "0702e21b99f46980adbb2bad21c802c3d0790084eab57a65d628319ab001d4ce",
     "railway-variables.example": "bd43ff77d4734787fca02842df5d963cf106ee0a2ab3605bd8b3d779f2f3b485",
     "service/tests/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "service/tests/test_deployment.py": "42d4bd85d910a6a405ee90720a3d7b168b117c0c35d04f04cf7033c6a7cc32df"
+    "service/tests/test_deployment.py": "c12687a2e9a9057e17f6f333e9e3739107209d71a053f450557cf6dd87975a18"
   }
 }

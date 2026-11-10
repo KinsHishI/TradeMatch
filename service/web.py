@@ -20,7 +20,7 @@ from .server import MAX_UPLOAD, SETTINGS_KEYS
 
 STATIC = Path(__file__).parent / 'static'
 CSP = "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'"
-VERSION = 4
+VERSION = 5
 
 
 class LoginInput(BaseModel):
@@ -266,6 +266,12 @@ def create_app(application, *, close_on_shutdown=False, deployment_access=None):
         await bounded_body(request, 64 * 1024)
         run(run_id)
         return result(await run_in_threadpool(application.resume, run_id), 202)
+
+    @app.post('/api/runs/{run_id}/retry')
+    async def retry(run_id: str, request: Request):
+        await bounded_body(request, 64 * 1024)
+        run(run_id)
+        return result(await run_in_threadpool(application.retry_failed, run_id), 202)
 
     @app.post('/api/demo/load')
     async def load_demo(request: Request):
