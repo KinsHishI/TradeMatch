@@ -4,21 +4,30 @@ import hashlib
 import json
 from pathlib import Path
 import re
+from urllib.parse import quote
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, RedirectResponse, Response
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from starlette.concurrency import run_in_threadpool
 
 from .api_client import APIError
+from .access import LoginSessions, SESSION_COOKIE, SESSION_SECONDS, login_target
 from .evaluate import ROOT
 from .report import report_html, style_hash
 from .server import MAX_UPLOAD, SETTINGS_KEYS
 
 STATIC = Path(__file__).parent / 'static'
 CSP = "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'"
-VERSION = 3
+VERSION = 4
+
+
+class LoginInput(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    username: str = Field(min_length=1, max_length=128)
+    password: str = Field(min_length=1, max_length=1024)
+    next: str = Field(default='/', max_length=2048)
 
 
 class ConnectionSettings(BaseModel):
@@ -59,6 +68,8 @@ def create_app(application, *, close_on_shutdown=False, deployment_access=None):
 
     app = FastAPI(title='TradeMatch Local', docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
     app.state.application = application
+    sessions = LoginSessions()
+    app.state.login_sessions = sessions
 
     def result(value, status=200, download=None):
         headers = {'Content-Disposition': f'attachment; filename="{download}"'} if download else None
@@ -70,19 +81,25 @@ def create_app(application, *, close_on_shutdown=False, deployment_access=None):
         port = request.url.port or 80
         hosts = {f'127.0.0.1:{port}', f'localhost:{port}'}
         origin = request.headers.get('origin')
+        path = request.url.path
         if deployment_access is not None:
             # Railway healthchecks see no data and must work before browser authentication.
             if request.url.path == '/api/health' and request.method == 'GET':
                 response = await call_next(request)
             elif not deployment_access.accepts_host(request.headers.get('host', '')):
                 response = result({'error': '배포된 서비스 주소에서 접속하세요.'}, 403)
-            elif not deployment_access.authenticated(request.headers.get('authorization', '')):
-                response = result({'error': '시연용 접속 암호가 필요합니다.'}, 401)
-                response.headers['WWW-Authenticate'] = 'Basic realm="TradeMatch", charset="UTF-8"'
-            elif deployment_access.restricted(request.url.path):
-                response = result({'error': '배포 환경의 설정과 관리 기능은 서버에서 관리합니다.'}, 403)
             elif request.method not in {'GET', 'HEAD'} and origin != deployment_access.origin:
                 response = result({'error': '서비스 화면에서 요청을 진행하세요.'}, 403)
+            elif path in {'/login', '/login.js', '/login.css', '/api/login', '/api/logout'}:
+                response = await call_next(request)
+            elif not sessions.valid(request.cookies.get(SESSION_COOKIE)):
+                if request.method in {'GET', 'HEAD'} and (path in {'/', '/workspace'} or path.endswith(('.pdf', '.html'))):
+                    target = login_target(path + ('?' + request.url.query if request.url.query else ''))
+                    response = RedirectResponse('/login?next=' + quote(target, safe=''), status_code=303)
+                else:
+                    response = result({'error': '다시 로그인해 주세요.', 'login_url': '/login'}, 401)
+            elif deployment_access.restricted(path):
+                response = result({'error': '배포 환경의 설정과 관리 기능은 서버에서 관리합니다.'}, 403)
             else:
                 response = await call_next(request)
         elif request.headers.get('host', '') not in hosts or (request.method not in {'GET', 'HEAD'} and origin and origin not in {'http://' + h for h in hosts}):
@@ -111,6 +128,7 @@ def create_app(application, *, close_on_shutdown=False, deployment_access=None):
         return result({'error': '입력 형식과 필수 항목을 확인하세요.'}, 400)
 
     for route, name, mime in [('/', 'product.html', 'text/html'), ('/workspace', 'index.html', 'text/html'),
+                              ('/login.js', 'login.js', 'text/javascript'), ('/login.css', 'login.css', 'text/css'),
                               ('/product.js', 'product.js', 'text/javascript'), ('/product.css', 'product.css', 'text/css'),
                               ('/app.js', 'app.js', 'text/javascript'), ('/style.css', 'style.css', 'text/css'),
                               ('/report.css', 'report.css', 'text/css')]:
@@ -120,6 +138,38 @@ def create_app(application, *, close_on_shutdown=False, deployment_access=None):
                 return FileResponse(STATIC / filename, media_type=content_type)
             return serve
         app.add_api_route(route, bind_asset(name, mime), methods=['GET'], include_in_schema=False)
+
+    @app.get('/login')
+    def login_page(request: Request):
+        if deployment_access is None or sessions.valid(request.cookies.get(SESSION_COOKIE)):
+            return RedirectResponse(login_target(request.query_params.get('next', '/')), status_code=303)
+        return FileResponse(STATIC / 'login.html', media_type='text/html')
+
+    @app.post('/api/login')
+    async def login(request: Request):
+        if deployment_access is None:
+            return result({'error': '이 화면은 배포된 서비스에서 사용해 주세요.'}, 400)
+        client = request.client.host if request.client else 'unknown'
+        if not sessions.allow_login(client):
+            response = result({'error': '접속 시도가 많아요. 1분 후 다시 시도해 주세요.'}, 429)
+            response.headers['Retry-After'] = '60'
+            return response
+        data = LoginInput.model_validate(json.loads(await bounded_body(request, 4096)))
+        if not deployment_access.credentials_valid(data.username, data.password):
+            return result({'error': '접속 ID 또는 암호를 확인해 주세요.'}, 401)
+        sessions.revoke(request.cookies.get(SESSION_COOKIE, ''))
+        token = sessions.issue(client)
+        response = result({'redirect': login_target(data.next)})
+        response.set_cookie(SESSION_COOKIE, token, max_age=SESSION_SECONDS, secure=True,
+                            httponly=True, samesite='lax', path='/')
+        return response
+
+    @app.post('/api/logout')
+    def logout(request: Request):
+        sessions.revoke(request.cookies.get(SESSION_COOKIE, ''))
+        response = result({'redirect': '/login'})
+        response.delete_cookie(SESSION_COOKIE, path='/', secure=True, httponly=True, samesite='lax')
+        return response
 
     @app.get('/api/health')
     def health():

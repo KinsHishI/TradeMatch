@@ -1,8 +1,11 @@
 """Explicit, fail-closed access policy for the invitation-only demo deployment."""
-import base64
 from dataclasses import dataclass, field
+import hashlib
 import hmac
 import re
+import secrets
+import threading
+import time
 from urllib.parse import urlsplit
 
 
@@ -28,12 +31,72 @@ class DeploymentAccess:
         authority = urlsplit(self.origin).netloc
         return host.lower() in {authority, authority + ':443' if ':' not in authority else authority}
 
-    def authenticated(self, authorization):
-        scheme, _, token = authorization.partition(' ')
-        expected = base64.b64encode((self.username + ':' + self.password).encode()).decode()
-        return scheme.lower() == 'basic' and hmac.compare_digest(token.encode(), expected.encode())
+    def credentials_valid(self, username, password):
+        user_ok = hmac.compare_digest(username.strip().casefold().encode(), self.username.casefold().encode())
+        password_ok = hmac.compare_digest(password.encode(), self.password.encode())
+        return user_ok & password_ok
 
     @staticmethod
     def restricted(path):
         return (path in {'/workspace', '/api/settings', '/api/retrieve', '/api/report', '/api/demo', '/api/demo/load'}
                 or path.startswith('/api/samples/'))
+
+
+SESSION_COOKIE = '__Host-tradematch_session'
+SESSION_SECONDS = 12 * 60 * 60
+
+
+class LoginSessions:
+    """Bounded, revocable sessions; no password or session token is written to disk."""
+    def __init__(self, *, clock=time.monotonic):
+        self.clock = clock
+        self.lock = threading.Lock()
+        self.sessions = {}
+        self.attempts = {}
+
+    def _prune(self):
+        now = self.clock()
+        self.sessions = {key: expiry for key, expiry in self.sessions.items() if expiry > now}
+        self.attempts = {key: value for key, value in self.attempts.items() if value[1] > now}
+
+    def allow_login(self, client):
+        with self.lock:
+            self._prune()
+            count, until = self.attempts.get(client, (0, self.clock() + 60))
+            if count >= 10:
+                return False
+            if client not in self.attempts and len(self.attempts) >= 1024:
+                self.attempts.pop(next(iter(self.attempts)))
+            self.attempts[client] = (count + 1, until)
+            return True
+
+    def issue(self, client):
+        token = secrets.token_urlsafe(32)
+        with self.lock:
+            self._prune()
+            self.attempts.pop(client, None)
+            if len(self.sessions) >= 256:
+                self.sessions.pop(next(iter(self.sessions)))
+            self.sessions[hashlib.sha256(token.encode()).hexdigest()] = self.clock() + SESSION_SECONDS
+        return token
+
+    def valid(self, token):
+        if not isinstance(token, str) or not re.fullmatch(r'[A-Za-z0-9_-]{43}', token):
+            return False
+        with self.lock:
+            self._prune()
+            return hashlib.sha256(token.encode()).hexdigest() in self.sessions
+
+    def revoke(self, token):
+        with self.lock:
+            self.sessions.pop(hashlib.sha256(token.encode()).hexdigest(), None)
+
+
+def login_target(value):
+    if (not isinstance(value, str) or len(value) > 2048 or not value.startswith('/')
+            or value.startswith('//') or '\\' in value or any(ord(c) < 32 or ord(c) == 127 for c in value)):
+        return '/'
+    parsed = urlsplit(value)
+    if parsed.scheme or parsed.netloc or parsed.path == '/login':
+        return '/'
+    return value

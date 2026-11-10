@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>접속하기 · TradeMatch</title>
+  <link rel="stylesheet" href="/login.css"><script src="/login.js" defer></script>
+</head>
+<body>
+  <header class="login-header"><a class="brand" href="/login"><span class="brand-mark" aria-hidden="true">T↔</span>TradeMatch</a><span class="header-caption">선적서류 대조·검증</span></header>
+  <main class="login-layout">
+    <section class="login-intro" aria-labelledby="introHeading">
+      <p class="eyebrow">서류 사이의 차이를, 한눈에.</p>
+      <h1 id="introHeading">비교는 빠르게.<br>확인은 원문으로.</h1>
+      <p class="intro-description">발주서부터 선하증권까지.<br>서로 다른 부분과 직접 확인할 내용을<br>문서 원본에서 살펴보세요.</p>
+      <div class="document-scene" aria-hidden="true"><div class="paper paper-back"><span>PO</span><i></i><i></i><i></i></div><div class="paper paper-front"><span>CI</span><i></i><i></i><b>↔</b><i></i></div><div class="document-tags"><span>발주서</span><span>송장</span><span>포장명세서</span><span>B/L</span></div></div>
+    </section>
+    <section class="login-card" aria-labelledby="loginHeading">
+      <p class="eyebrow">TradeMatch 시연</p><h2 id="loginHeading">접속하기</h2>
+      <p class="card-description">안내받은 ID와 암호를 입력해 주세요.</p>
+      <form id="loginForm">
+        <label for="username">접속 ID</label><input id="username" name="username" value="Guest" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="128" required>
+        <label for="password">접속 암호</label><div class="password-field"><input id="password" name="password" type="password" autocomplete="current-password" placeholder="접속 암호를 입력해 주세요" maxlength="1024" required><button id="passwordToggle" type="button" aria-label="암호 보기" aria-pressed="false">보기</button></div>
+        <p id="loginError" class="login-error" role="alert" hidden></p>
+        <button id="loginSubmit" class="login-submit" type="submit"><span id="loginButtonText">접속하기</span><span aria-hidden="true">→</span></button>
+      </form>
+      <p class="login-note">접속 정보가 없다면 서비스 담당자에게 문의해 주세요.</p>
+      <noscript><p class="login-error">접속하려면 브라우저에서 JavaScript를 켜 주세요.</p></noscript>
+    </section>
+  </main>
+  <footer>TradeMatch · 선적서류를 함께 살펴보는 공간</footer>
+</body>
+</html>

@@ -62,10 +62,16 @@ async function api(path, options = {}) {
   let value;
   try { value = await response.json(); }
   catch { throw new Error('서비스 응답을 확인하지 못했습니다. 검증 기록에서 작업 상태를 확인하세요.'); }
+  if(response.status===401&&value.login_url==='/login')location.assign('/login?next='+encodeURIComponent(location.pathname+location.search));
   if (!response.ok) throw new Error(value.error || '요청을 처리하지 못했습니다.');
   return value;
 }
 const post = (path, value = {}) => api(path, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(value)});
+$('logoutButton').onclick=async()=>{
+  $('logoutButton').disabled=true;
+  try{await post('/api/logout');location.assign('/login');}
+  catch(error){notice(error.message);$('logoutButton').disabled=false;}
+};
 function notice(message = '') {
   $('notice').textContent = message;
   $('notice').hidden = !message;
@@ -156,6 +162,7 @@ $('aboutShowWorkflow').addEventListener('click', () => {
 });
 function updateConnection() {
   const ready = Boolean(connection.can_execute),locked=Boolean(connection.settings_locked);
+  $('logoutButton').hidden=!locked;
   for(const control of document.querySelectorAll('[data-local-only]'))control.hidden=locked;
   if(locked&&$('connectionDialog').open)$('connectionDialog').close();
   $('connectionDot').classList.toggle('connected', ready);

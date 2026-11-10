@@ -1,5 +1,4 @@
 """Portable deployment boundary tests: no real keys, PDFs, or Studio calls."""
-import base64
 import json
 from pathlib import Path
 import tempfile
@@ -8,7 +7,7 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from service.access import DeploymentAccess
+from service.access import DeploymentAccess, LoginSessions, SESSION_COOKIE, SESSION_SECONDS, login_target
 from service.deployment import configuration, create_deployment_app
 from service.server import Application
 from service.web import create_app
@@ -30,8 +29,9 @@ class DeploymentTests(unittest.TestCase):
         self.app = Application(self.state, api_key='test-only-api-token')
         self.client = TestClient(create_app(self.app, deployment_access=self.access),
                                  base_url='https://tradematch.example')
-        token = base64.b64encode(b'demo:test-only-access-password').decode()
-        self.headers = {'Authorization': 'Basic ' + token, 'Origin': 'https://tradematch.example'}
+        self.headers = {'Origin': 'https://tradematch.example'}
+        login = self.client.post('/api/login', json={'username': 'DEMO', 'password': 'test-only-access-password'}, headers=self.headers)
+        self.assertEqual(login.status_code, 200)
 
     def tearDown(self):
         self.client.close()
@@ -54,17 +54,17 @@ class DeploymentTests(unittest.TestCase):
     def test_every_data_and_execution_route_requires_authentication(self):
         paths = ['/', '/product.js', '/product.css', '/api/connection', '/api/runs',
                  '/api/runs/' + 'a' * 32 + '/raw', '/api/runs/' + 'a' * 32 + '/document.pdf']
-        for path in paths:
-            with self.subTest(path=path):
-                response = self.client.get(path)
-                self.assertEqual(response.status_code, 401)
-                self.assertIn('WWW-Authenticate', response.headers)
-                self.assertNotIn(self.env['UPSTAGE_API_KEY'], response.text)
-        with patch.object(self.app, 'start_upload') as upload:
-            self.assertEqual(self.client.post('/api/upload', content=b'%PDF-test').status_code, 401)
-            upload.assert_not_called()
-        wrong = self.client.get('/api/runs', auth=('demo', 'wrong'))
-        self.assertEqual(wrong.status_code, 401)
+        with TestClient(self.client.app, base_url='https://tradematch.example') as visitor:
+            for path in paths:
+                with self.subTest(path=path):
+                    response = visitor.get(path, follow_redirects=False)
+                    self.assertEqual(response.status_code, 303 if path in {'/', '/api/runs/' + 'a' * 32 + '/document.pdf'} else 401)
+                    self.assertNotIn('WWW-Authenticate', response.headers)
+                    self.assertNotIn(self.env['UPSTAGE_API_KEY'], response.text)
+            with patch.object(self.app, 'start_upload') as upload:
+                self.assertEqual(visitor.post('/api/upload', content=b'%PDF-test', headers=self.headers).status_code, 401)
+                upload.assert_not_called()
+            self.assertEqual(visitor.get('/api/runs', auth=('demo', 'test-only-access-password')).status_code, 401)
         self.assertEqual(self.client.get('/api/health').status_code, 200)
 
     def test_valid_viewer_can_read_but_cannot_change_workflow_or_import_jobs(self):
@@ -124,6 +124,69 @@ class DeploymentTests(unittest.TestCase):
             deployed.state.application.close()
             (self.state / 'settings.json').write_text('{}')
             with self.assertRaises(ValueError): create_deployment_app()
+
+    def test_login_cookie_and_logout_revoke_access_without_browser_popup(self):
+        with TestClient(self.client.app, base_url='https://tradematch.example') as visitor:
+            page = visitor.get('/?run=' + 'a' * 32, follow_redirects=False)
+            self.assertEqual(page.status_code, 303)
+            self.assertIn('/login?next=', page.headers['location'])
+            for path in ['/login', '/login.css', '/login.js']:
+                self.assertEqual(visitor.get(path).status_code, 200)
+            password = self.env['TRADEMATCH_ACCESS_PASSWORD']
+            self.assertNotIn(password, visitor.get('/login').text)
+            self.assertNotIn(self.env['UPSTAGE_API_KEY'], visitor.get('/login').text)
+            invalid = visitor.post('/api/login', json={'username': 'demo', 'password': 'wrong'}, headers=self.headers)
+            self.assertEqual(invalid.status_code, 401)
+            self.assertNotIn('WWW-Authenticate', invalid.headers)
+            self.assertNotIn('wrong', invalid.text)
+            login = visitor.post('/api/login', json={'username': 'Demo', 'password': password, 'next': '/?view=history'}, headers=self.headers)
+            self.assertEqual(login.json(), {'redirect': '/?view=history'})
+            cookie = login.headers['set-cookie']
+            for attribute in ['__Host-tradematch_session=', 'HttpOnly', 'Secure', 'SameSite=lax', 'Path=/']:
+                self.assertIn(attribute, cookie)
+            self.assertNotIn(password, cookie)
+            token = visitor.cookies.get(SESSION_COOKIE)
+            self.assertEqual(visitor.get('/api/runs').status_code, 200)
+            self.assertEqual(visitor.post('/api/logout', headers=self.headers).status_code, 200)
+            self.assertEqual(visitor.get('/api/runs').status_code, 401)
+            self.assertFalse(self.client.app.state.login_sessions.valid(token))
+
+    def test_login_rejects_foreign_origin_open_redirect_and_oversized_input(self):
+        data = {'username': 'demo', 'password': self.env['TRADEMATCH_ACCESS_PASSWORD']}
+        for origin in ['', 'null', 'https://unrelated.example']:
+            self.assertEqual(self.client.post('/api/login', json=data, headers={'Origin': origin}).status_code, 403)
+            self.assertEqual(self.client.post('/api/logout', headers={'Origin': origin}).status_code, 403)
+        for target in ['https://unrelated.example', '//unrelated.example', '/\\unrelated.example', '/login', '/\r\nunrelated']:
+            response = self.client.post('/api/login', json=data | {'next': target}, headers=self.headers)
+            self.assertEqual(response.json()['redirect'], '/')
+        response = self.client.post('/api/login', json=data | {'password': 'x' * 5000}, headers=self.headers)
+        self.assertEqual(response.status_code, 400)
+        self.assertNotIn('x' * 5000, response.text)
+
+    def test_login_attempts_are_limited_and_password_is_exact(self):
+        with TestClient(self.client.app, base_url='https://tradematch.example') as visitor:
+            for _ in range(10):
+                response = visitor.post('/api/login', json={'username': 'demo', 'password': self.env['TRADEMATCH_ACCESS_PASSWORD'] + ' '}, headers=self.headers)
+                self.assertEqual(response.status_code, 401)
+            limited = visitor.post('/api/login', json={'username': 'demo', 'password': 'wrong'}, headers=self.headers)
+            self.assertEqual(limited.status_code, 429)
+            self.assertEqual(limited.headers['retry-after'], '60')
+
+    def test_sessions_expire_and_remain_bounded_without_persisted_tokens(self):
+        clock = [0]
+        sessions = LoginSessions(clock=lambda: clock[0])
+        token = sessions.issue('client')
+        self.assertTrue(sessions.valid(token))
+        self.assertFalse(sessions.valid(token[:-1] + ('a' if token[-1] != 'a' else 'b')))
+        self.assertNotIn(token, sessions.sessions)
+        clock[0] = SESSION_SECONDS
+        self.assertFalse(sessions.valid(token))
+        for _ in range(260): sessions.issue('client')
+        self.assertEqual(len(sessions.sessions), 256)
+        for i in range(1030): self.assertTrue(sessions.allow_login(str(i)))
+        self.assertEqual(len(sessions.attempts), 1024)
+        self.assertEqual(login_target('/?view=history'), '/?view=history')
+        self.assertEqual(list(self.state.glob('*session*')), [])
 
 
 if __name__ == '__main__':
