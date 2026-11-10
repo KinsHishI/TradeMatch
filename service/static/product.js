@@ -359,6 +359,9 @@ function fieldLocation(meta) {
   const region = boxFromPoints(meta.coordinates);
   return region ? {page:meta.page, boxes:[region], precision:'region'} : {page:meta.page, boxes:[], precision:'page'};
 }
+function canonicalDocumentKind(value){
+  return ({PO:'PO',CI:'CI','C/I':'CI',PL:'PL','P/L':'PL',BL:'BL','B/L':'BL',OTHER:'OTHER'})[value]||null;
+}
 function attachLocations(source, raw) {
   const native = [], linked = [], documentLinks=[],itemLinks=[];
   for (const step of Array.isArray(raw?.output) ? raw.output : []) {
@@ -379,7 +382,7 @@ function attachLocations(source, raw) {
     const key = {PO:'po_number',CI:'invoice_number',PL:'packing_list_number',BL:'bl_number'}[document.kind];
     const matches = native.filter(item => item.key === key && item.data[key] === document.document_id && sameSourceData(item.data,document.data)&&
       (!document.page||!item.meta.page_ranges?.length||item.meta.page_ranges.some(range=>range[0]<=document.page&&range[1]>=document.page)));
-    const aliases=linked.filter(item=>item.document_type===document.kind&&sameSourceData(item.extract,document.data));
+    const aliases=linked.filter(item=>canonicalDocumentKind(item.document_type)===document.kind&&sameSourceData(item.extract,document.data));
     return {...document, source_key:aliases.length===1?aliases[0].source_key:null, locationMeta:matches.length === 1 ? matches[0].meta : null};
   })};
 }
@@ -672,7 +675,7 @@ function makePaper(side,model,session){
   const article=$(prefix+'Paper'),stage=$(prefix+'Stage'),overlay=$(prefix+'Overlay');
   article.className='comparison-paper '+(comparisonModel.relation==='context'||comparisonModel.relation==='cumulative'||refs.some(ref=>ref.sourceContext)||comparisonModel.relation==='calculation'&&side==='Left'?'supporting':statusTone(activeCheck.result));
   $(prefix+'Title').textContent=doc?(documentLabel[doc.kind]||doc.kind)+(comparisonModel.relation==='documents'?'':' · '+model.role):model.missingKind?documentLabel[model.missingKind]+' 미제공':'비교할 문서 확인이 필요해요';
-  $(prefix+'Meta').textContent=doc?doc.document_id+' · '+page+'페이지':'';
+  $(prefix+'Meta').textContent=doc?(doc.document_id||'문서 번호 미확인')+' · '+page+'페이지':'';
   $(prefix+'Value').textContent=refs.length===1?comparisonValue(refs[0]):refs.length?'검사에 사용한 항목 '+refs.length+'곳':'';
   $(prefix+'Field').textContent=refs.length===1?pairCaption(refs[0]):model.role;
   $(prefix+'Open').hidden=!doc||!currentSource.has_pdf;
@@ -694,7 +697,7 @@ function makePaper(side,model,session){
   $(prefix+'Viewport').setAttribute('tabindex','0');$(prefix+'Viewport').setAttribute('role','region');
   $(prefix+'Viewport').setAttribute('aria-label',(doc?documentLabel[doc.kind]||doc.kind:'문서')+' 원문 · 스크롤로 이동');
   const old=$(prefix+'Image'),image=element('img');image.id=prefix+'Image';image.alt=doc?(documentLabel[doc.kind]||doc.kind)+' '+page+'페이지 원문':'비교할 원문 없음';image.hidden=true;old.replaceWith(image);
-  const empty=$(prefix+'Empty');empty.hidden=false;empty.textContent=!doc?(model.missingKind?documentLabel[model.missingKind]+' 문서가 없습니다.':'이 검사에 대응하는 두 번째 원문이 없습니다.'):!currentSource.has_pdf?'원본 PDF가 보관되어 있지 않습니다.':'원문 페이지를 불러오고 있습니다.';
+  const empty=$(prefix+'Empty');empty.hidden=false;empty.textContent=!doc?(model.missingKind?documentLabel[model.missingKind]+' 문서가 없습니다.':'이 검사에서 비교할 문서의 연결 정보를 확인하지 못했어요.'):!currentSource.has_pdf?'원본 PDF가 보관되어 있지 않습니다.':'원문 페이지를 불러오고 있습니다.';
   article.dataset.page=page;
   image.onload=()=>{if(session!==pairSession)return;image.hidden=false;empty.hidden=true;setPaperView(side,precise||compareZoom?'detail':'page');scheduleComparisonLines();};
   image.onerror=()=>{if(session!==pairSession)return;empty.hidden=false;empty.textContent='미리보기를 준비하지 못했습니다. 원본 PDF를 열어 확인해주세요.';scheduleComparisonLines();};
