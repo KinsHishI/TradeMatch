@@ -7,10 +7,10 @@ GitHub 코드 저장소 → Railway Docker 서비스 한 개 → Upstage Studio.
 
 - Agent: `agt_8H8XCDtscqxp9KbwqBzUJw`
 - Project: `proj_e88CHrANRG3JeEdUgt95vf`
-- Config: `2`
-- 판정 노드: 자동 식별. 새 Export에서 실제 이름을 확인한 뒤 필요 시 고정한다.
+- Config: `4`
+- 판정 노드: `최종판정`
 
-Docker 기본값은 위 Agent·Config를 사용한다. 새 워크플로우 Export는 아직 전달되지 않아 소개 페이지의 상세 흐름도는 준비 중으로 표시하며, 이전 Config 24 구조를 현재 구조로 표시하지 않는다. Railway Variables에 이전 Agent·Config가 등록되어 있으면 해당 값이 우선하므로 위 값으로 변경한다. `railway-variables.example`에는 입력할 변수 이름과 공개 가능한 식별자만 있으며, API 키·접속 암호·도메인 값은 비어 있다. 비밀값은 Railway에서 직접 입력한다.
+Docker 기본값은 위 Agent·Config를 사용한다. 제공된 Config 4 Export의 실제 노드·연결선·분기를 소개 페이지에 표시한다. 연결 구조는 이전과 같고 최종 결과는 19개 검사 항목으로 집계된다. Railway Variables에 이전 Agent·Config가 등록되어 있으면 해당 값이 우선하므로 위 값으로 변경한다. `railway-variables.example`에는 입력할 변수 이름과 공개 가능한 식별자만 있으며, API 키·접속 암호·도메인 값은 비어 있다. 비밀값은 Railway에서 직접 입력한다.
 
 소개 페이지에는 실제 노드 이름·연결선·분기만 포함하며 전체 프롬프트·추출 스키마는 공개하지 않는다. PASS의 최종 비교값이 생략된 경우, Studio 연결 결과가 실제 Extract와 일치하는 문서만 원문 참고 자료로 표시한다. 누적 수량 검사는 포함된 여러 송장을 따로 볼 수 있고, 개별 송장 수량을 전체 발주 수량과 직접 비교한 불일치로 표시하지 않는다. Studio의 원본 판정은 변경하지 않는다.
 

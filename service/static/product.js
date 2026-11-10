@@ -424,10 +424,17 @@ function refsFor(check) {
   }
   return refs.length?refs:passSourceRefs(check);
 }
+function checkDocumentRefs(check){
+  if(check.documents?.length)return check.documents;
+  const pair=/^(PO_CI|CI_PL|PL_BL)(?:_|$)/.exec(String(check.check_id||''))?.[1];
+  if(!pair)return [];
+  const ids=(currentRow?.analysis?.result?.relationships||[]).filter(link=>link.pair===pair).flatMap(link=>[...(link.from_documents||[]),...(link.to_documents||[])]);
+  return [...new Set(ids)];
+}
 function passSourceRefs(check){
   if(check.result!=='PASS')return [];
   const id=String(check.check_id||'').toUpperCase(),refs=[];
-  for(const token of check.documents||[]){
+  for(const token of checkDocumentRefs(check)){
     const doc=documentFor(token);if(!doc)continue;
     const item=/^([A-Z]+:\d+):items\[(\d+)\]$/.exec(token);
     let fields=[];
@@ -488,12 +495,14 @@ function preferredPairRefs(check, refs) {
 function pairCaption(ref){return fieldLabel(ref.value.field.replace(/_raw$/,''));}
 function sourceRef(doc,field){
   const value=pathValue(doc.data,field);if(value===undefined)return null;
-  const original={document:doc.document_id,field,value,unit:null};
+  const leaf=field.split('.').pop();
+  const unit=leaf==='quantity'?pathValue(doc.data,field.replace(/quantity$/,'quantity_unit')):leaf==='unit_price'||leaf==='invoice_total'?doc.data.currency:leaf==='gross_weight'?doc.data.weight_unit:leaf==='total_packages'?doc.data.package_unit:null;
+  const original={document:doc.document_id,field,value,unit:unit??null};
   return {key:doc.source_key+':'+field,document:doc,value:original,anchor:exactAnchor(doc,original),sourceContext:true};
 }
 function confirmedReferencePairs(check){
   if(check.result!=='PASS'||!/DOCUMENT_LINK/.test(check.check_id))return [];
-  const pair=/^(PO_CI|CI_PL|PL_BL)/.exec(check.check_id)?.[1],included=new Set((check.documents||[]).map(documentFor).filter(Boolean)),output=[];
+  const pair=/^(PO_CI|CI_PL|PL_BL)/.exec(check.check_id)?.[1],included=new Set(checkDocumentRefs(check).map(documentFor).filter(Boolean)),output=[];
   for(const relationship of currentSource?.documentLinks||[]){
     if(relationship.pair!==pair||relationship.link_status!=='CONFIRMED')continue;
     for(const from of relationship.from_sources||[])for(const to of relationship.to_sources||[]){
@@ -510,13 +519,41 @@ function confirmedReferencePairs(check){
   }
   return output;
 }
-function correspondenceAllowed(left,right){
-  if(!left||!right)return false;
-  if(!left.sourceContext&&!right.sourceContext)return true;
-  if(!left.document?.source_key||!right.document?.source_key||comparisonValuesDiffer(left.value,right.value))return false;
+function correspondenceBound(left,right){
+  if(!left?.document?.source_key||!right?.document?.source_key)return false;
   const a=left.document.source_key,b=right.document.source_key,ai=/^items\[(\d+)\]/.exec(left.value.field),bi=/^items\[(\d+)\]/.exec(right.value.field);
   if(ai||bi)return Boolean(ai&&bi&&(currentSource.itemLinks||[]).some(link=>link.link_status==='CONFIRMED'&&link.from_source===a&&link.to_source===b&&link.from_item_index===Number(ai[1])&&link.to_item_index===Number(bi[1])));
   return (currentSource.documentLinks||[]).some(link=>link.link_status==='CONFIRMED'&&link.from_sources?.includes(a)&&link.to_sources?.includes(b));
+}
+function correspondenceAllowed(left,right){
+  if(!left||!right)return false;
+  if(!left.sourceContext&&!right.sourceContext)return true;
+  return !comparisonValuesDiffer(left.value,right.value)&&correspondenceBound(left,right);
+}
+function aggregateItemComparisons(check){
+  if(check.result!=='PASS'||(check.documents||[]).some(id=>/:items\[/.test(id)))return [];
+  const id=String(check.check_id),pair=/^(PO_CI|CI_PL)_/.exec(id)?.[1];
+  const leaves=/_(ITEM_MAPPING|ITEM_IDENTITY)$/.test(id)?['sku','model']:/_(QUANTITY|PRODUCT_QUANTITY|CUMULATIVE_QUANTITY)$/.test(id)?['quantity']:/_QUANTITY_UNIT$/.test(id)?['quantity_unit']:/_UNIT_PRICE$/.test(id)?['unit_price','price_basis']:[];
+  if(!pair||!leaves.length)return [];
+  const scope=new Set(checkDocumentRefs(check).map(documentFor).filter(Boolean)),matches=[];
+  for(const link of currentSource?.itemLinks||[]){
+    if(link.pair!==pair||link.link_status!=='CONFIRMED'||!Number.isInteger(link.from_item_index)||!Number.isInteger(link.to_item_index))continue;
+    const from=documentFor(link.from_source),to=documentFor(link.to_source);
+    if(!from||!to||!scope.has(from)||!scope.has(to))continue;
+    for(const leaf of leaves){
+      const left=sourceRef(from,'items['+link.from_item_index+'].'+leaf),right=sourceRef(to,'items['+link.to_item_index+'].'+leaf);
+      if(!left||!right||[left,right].some(ref=>ref.value.value===null||ref.value.value===''))continue;
+      matches.push({left,right,from,to,link,leaf});
+    }
+  }
+  const cumulative=id==='PO_CI_CUMULATIVE_QUANTITY',seen=new Set();
+  return matches.filter(item=>{const key=item.left.key+'|'+item.right.key;if(seen.has(key))return false;seen.add(key);return true;}).map(item=>{
+    const {left,right,from,to,link}=item;
+    const count=new Set(matches.filter(other=>other.left.key===left.key).map(other=>other.to.source_key)).size;
+    return {key:'aggregate:'+left.key+'|'+right.key,relation:cumulative?'cumulative':'documents',
+      label:pairCaption(left)+' · '+from.document_id+' ↔ '+to.document_id+' · 품목 '+(link.to_item_index+1),
+      left:{document:from,refs:[left],role:pairCaption(left)},right:{document:to,refs:[right],role:pairCaption(right)},links:cumulative?[]:[[0,0]],sourceCount:count};
+  });
 }
 function missingDocumentKind(check){
   if(check.result!=='REQUIRES_HUMAN_REVIEW')return null;
@@ -527,6 +564,7 @@ function missingDocumentKind(check){
 }
 function comparisonModels(check, refs) {
   const references=confirmedReferencePairs(check);if(references.length)return references;
+  const items=aggregateItemComparisons(check);if(items.length)return items;
   const candidates=preferredPairRefs(check,refs), total=candidates.find(ref=>ref.value.field==='invoice_total');
   const absent=missingDocumentKind(check);
   if(absent){
@@ -551,6 +589,7 @@ function comparisonModels(check, refs) {
     for(let i=0;i<unique.length;i++)for(let j=i+1;j<unique.length;j++){
       const left=unique[i],right=unique[j],kinds=left.document.kind+'_'+right.document.kind;
       if(!['PO_CI','CI_PL','PL_BL'].includes(kinds))continue;
+      if((left.sourceContext||right.sourceContext)&&!correspondenceBound(left,right))continue;
       output.push({key:left.key+'|'+right.key,relation:'documents',label:pairCaption(left),left:{document:left.document,refs:[left],role:pairCaption(left)},right:{document:right.document,refs:[right],role:pairCaption(right)},links:[[0,0]]});
     }
   }
@@ -565,7 +604,7 @@ function comparisonModels(check, refs) {
     if(check.result==='REQUIRES_HUMAN_REVIEW')output.sort((a,b)=>Number([...b.left.refs,...b.right.refs].some(ref=>ref.value.value===''||ref.value.value===null))-Number([...a.left.refs,...a.right.refs].some(ref=>ref.value.value===''||ref.value.value===null)));
     return output;
   }
-  const documents=[...new Set([...candidates.map(ref=>ref.document),...(check.documents||[]).map(documentFor)].filter(Boolean))].sort((a,b)=>(order[a.kind]??9)-(order[b.kind]??9));
+  const documents=[...new Set([...candidates.map(ref=>ref.document),...checkDocumentRefs(check).map(documentFor)].filter(Boolean))].sort((a,b)=>(order[a.kind]??9)-(order[b.kind]??9));
   const missingKind=missingDocumentKind(check);
   return [{key:'source-context',relation:'context',label:'선택 검사의 원문',left:{document:documents[0]||null,refs:candidates.filter(ref=>ref.document===documents[0]),role:'검사 근거'},right:{document:documents[1]||null,refs:candidates.filter(ref=>documents[1]&&ref.document===documents[1]),role:'검사 근거',missingKind:documents[1]?null:missingKind},links:[]}];
 }
@@ -615,7 +654,7 @@ function paintReviewCard() {
   const scope=reviewFilter==='all'?'전체 항목':reviewFilter==='attention'?'확인할 항목':reviewFilter==='REQUIRES_HUMAN_REVIEW'?'검토 필요':statusLabel(reviewFilter);
   $('reviewControlLabel').textContent='↑ '+scope+' '+(index+1)+' / '+checks.length+' · '+friendly(activeCheck);
   $('reviewAll').hidden=reviewFilter==='all';$('reviewAll').textContent='전체 '+all.length+'개 항목 보기';
-  $('checkDocuments').textContent=(activeCheck.documents||[]).map(documentCaption).join(' · ');
+  $('checkDocuments').textContent=checkDocumentRefs(activeCheck).map(documentCaption).join(' · ');
   if(renderedReviewCheck!==activeCheck){
     renderedReviewCheck=activeCheck;
     $('reasonDetails').open=false;
@@ -659,7 +698,11 @@ function comparisonGuide(model) {
   if(missing)return '이번 PDF에서 '+name({kind:missing})+'을 찾지 못했어요. 필요한 서류가 모두 들어 있는지 확인해 주세요.';
   const refs=[...model.left.refs,...model.right.refs];
   if(model.relation==='cumulative')return '이 검사는 송장 '+model.sourceCount+'건의 누적 수량을 확인한 결과예요. '+(model.sourceCount>1?'탭을 넘기며 각 송장을 살펴보세요. ':'')+'한 송장의 수량과 발주 수량의 차이만으로 판정하지 않아요.';
-  if(refs.some(ref=>ref.sourceContext))return correspondenceAllowed(model.left.refs[0],model.right.refs[0])?'같은 값을 가리키는 두 원문 위치를 선으로 연결했어요. Studio가 확인한 문서·품목 연결을 기준으로 보여드려요.':'일치로 판정된 항목이에요. 연결된 문서의 참고 원문을 보여드려요.';
+  if(refs.some(ref=>ref.sourceContext)){
+    const left=model.left.refs[0],right=model.right.refs[0];
+    if(correspondenceAllowed(left,right))return left.anchor?.boxes.length&&right.anchor?.boxes.length?'같은 값을 가리키는 두 원문 위치를 선으로 연결했어요. Studio가 확인한 문서·품목 연결을 기준으로 보여드려요.':'연결된 문서에서 같은 값이 확인됐어요. 일부 위치 정보가 없어 해당 페이지 전체를 보여드려요.';
+    return '일치로 판정된 항목이에요. 연결된 문서의 참고 원문을 보여드려요.';
+  }
   const blank=refs.find(ref=>ref.value.value===''||ref.value.value===null);
   if(blank)return name(blank.document)+'에서 '+fieldLabel(blank.value.field)+' 값을 확인하지 못했어요. 문서 원본을 살펴봐 주세요.';
   if(model.relation==='calculation')return '비교한 송장 합계는 '+comparisonValue(model.right.refs[0])+'예요. '+(model.calculation?'계산한 합계는 '+model.calculation.value+' '+model.calculation.unit+'예요. ':'')+'아래 품목 내역과 총액을 함께 확인해 보세요.';
