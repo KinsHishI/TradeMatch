@@ -1412,7 +1412,14 @@ function renderWorkflowDiagram(model) {
 function loadPublishedWorkflow(){
   const data=$('publishedWorkflow');if(!data)return;
   try{
-    const published=JSON.parse(data.textContent),model=parseWorkflowDiagram(published);
+    const published=JSON.parse(data.textContent);
+    if(!published.workflowConfig){
+      $('workflowMap').replaceChildren();$('workflowMap').hidden=true;$('workflowExpand').hidden=true;
+      $('workflowMapStatus').textContent='새 검증 환경이 연결됐어요. 상세 흐름도는 준비 중이에요.';
+      return;
+    }
+    $('workflowExpand').hidden=false;
+    const model=parseWorkflowDiagram(published);
     renderWorkflowDiagram(model);
     $('workflowMapStatus').textContent='현재 서비스의 검증 흐름 · 노드 '+model.nodes.length+'개 · 연결 '+model.edges.length+'개';
   }catch{$('workflowMapStatus').textContent='흐름도를 불러오지 못했어요. 문서 검증은 계속 이용할 수 있어요.';}

@@ -1,6 +1,6 @@
 FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_DISABLE_PIP_VERSION_CHECK=1
-ENV UPSTAGE_AGENT_ID=agt_TCjhWz2shafGShpziteyYn UPSTAGE_PROJECT_ID=proj_e88CHrANRG3JeEdUgt95vf UPSTAGE_CONFIG_ID=24 UPSTAGE_DECISION_NODE="최종판정"
+ENV UPSTAGE_AGENT_ID=agt_8H8XCDtscqxp9KbwqBzUJw UPSTAGE_PROJECT_ID=proj_e88CHrANRG3JeEdUgt95vf UPSTAGE_CONFIG_ID=2 UPSTAGE_DECISION_NODE=""
 WORKDIR /app
 COPY service/requirements.txt /app/service/requirements.txt
 RUN python -m pip install --no-cache-dir -r /app/service/requirements.txt
